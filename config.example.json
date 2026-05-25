@@ -1,0 +1,33 @@
+{
+  "poll_interval_seconds": 60,
+  "etfs": [
+    "513100",
+    "159941",
+    "159632",
+    "159659",
+    "513300"
+  ],
+  "rules": {
+    "max_premium_rate": 0.015,
+    "min_turnover_cny": 100000000,
+    "require_nasdaq_down": true,
+    "dedupe_minutes": 60
+  },
+  "nasdaq": {
+    "enabled": true,
+    "symbol": "NDX",
+    "max_change_pct": -0.5
+  },
+  "email": {
+    "enabled": false,
+    "smtp_host": "smtp.qq.com",
+    "smtp_port": 587,
+    "use_tls": true,
+    "username": "your_email@qq.com",
+    "password_env": "ETF_MONITOR_SMTP_PASSWORD",
+    "from_addr": "your_email@qq.com",
+    "to_addrs": [
+      "your_phone_or_email@example.com"
+    ]
+  }
+}
