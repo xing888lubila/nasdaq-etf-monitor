@@ -12,9 +12,23 @@ DEFAULT_ETFS = ("513100", "159941", "159632", "159659", "513300")
 @dataclass(frozen=True)
 class RuleConfig:
     max_premium_rate: float = 0.015
+    max_adjusted_premium_rate: float = 0.015
+    use_adjusted_premium: bool = True
     min_turnover_cny: float = 100_000_000
     require_nasdaq_down: bool = True
+    market_max_change_pct: float = -2.5
+    stale_after_seconds: int = 120
     dedupe_minutes: int = 60
+
+
+@dataclass(frozen=True)
+class USMarketConfig:
+    enabled: bool = True
+    primary_symbol: str = "NQ=F"
+    fallback_symbol: str = "QQQ"
+    fx_symbol: str = "CNH=X"
+    mega_cap_symbols: tuple[str, ...] = ("AAPL", "MSFT", "NVDA")
+    stale_after_minutes: int = 720
 
 
 @dataclass(frozen=True)
@@ -41,6 +55,7 @@ class MonitorConfig:
     poll_interval_seconds: int = 300
     etfs: tuple[str, ...] = DEFAULT_ETFS
     rules: RuleConfig = RuleConfig()
+    us_market: USMarketConfig = USMarketConfig()
     nasdaq: NasdaqConfig = NasdaqConfig()
     email: EmailConfig = EmailConfig()
 
@@ -49,6 +64,7 @@ def load_config(path: Path) -> MonitorConfig:
     data = json.loads(path.read_text(encoding="utf-8"))
 
     rules_data = data.get("rules", {})
+    us_market_data = data.get("us_market", {})
     nasdaq_data = data.get("nasdaq", {})
     email_data = data.get("email", {})
 
@@ -57,9 +73,25 @@ def load_config(path: Path) -> MonitorConfig:
         etfs=tuple(str(item).zfill(6) for item in data.get("etfs", DEFAULT_ETFS)),
         rules=RuleConfig(
             max_premium_rate=float(rules_data.get("max_premium_rate", 0.015)),
+            max_adjusted_premium_rate=float(
+                rules_data.get("max_adjusted_premium_rate", rules_data.get("max_premium_rate", 0.015))
+            ),
+            use_adjusted_premium=bool(rules_data.get("use_adjusted_premium", True)),
             min_turnover_cny=float(rules_data.get("min_turnover_cny", 100_000_000)),
             require_nasdaq_down=bool(rules_data.get("require_nasdaq_down", True)),
+            market_max_change_pct=float(rules_data.get("market_max_change_pct", -2.5)),
+            stale_after_seconds=int(rules_data.get("stale_after_seconds", 120)),
             dedupe_minutes=int(rules_data.get("dedupe_minutes", 60)),
+        ),
+        us_market=USMarketConfig(
+            enabled=bool(us_market_data.get("enabled", True)),
+            primary_symbol=str(us_market_data.get("primary_symbol", "NQ=F")),
+            fallback_symbol=str(us_market_data.get("fallback_symbol", "QQQ")),
+            fx_symbol=str(us_market_data.get("fx_symbol", "CNH=X")),
+            mega_cap_symbols=tuple(
+                str(item).upper() for item in us_market_data.get("mega_cap_symbols", ["AAPL", "MSFT", "NVDA"])
+            ),
+            stale_after_minutes=int(us_market_data.get("stale_after_minutes", 720)),
         ),
         nasdaq=NasdaqConfig(
             enabled=bool(nasdaq_data.get("enabled", True)),
@@ -102,4 +134,3 @@ def require_keys(config: EmailConfig) -> list[str]:
         if not value:
             missing.append(key)
     return missing
-

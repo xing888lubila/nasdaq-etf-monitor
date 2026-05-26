@@ -17,6 +17,7 @@ def main() -> int:
     parser.add_argument("--config", help="配置文件路径，默认优先读取 config.json")
     parser.add_argument("--once", action="store_true", help="只检查一次后退出")
     parser.add_argument("--send-snapshot", action="store_true", help="发送当前全部 ETF 明细")
+    parser.add_argument("--send-startup-snapshot", action="store_true", help="启动后只发送一次快照")
     args = parser.parse_args()
 
     project_root = Path.cwd()
@@ -25,16 +26,19 @@ def main() -> int:
     provider = AkshareMarketDataProvider()
     notifier = EmailNotifier(config.email)
     sent_at_by_symbol: dict[str, datetime] = {}
+    startup_snapshot_sent = False
 
     print(f"Using config: {config_path}")
     while True:
         snapshot = run_once(config, provider)
-        if args.send_snapshot:
+        if args.send_snapshot or (args.send_startup_snapshot and not startup_snapshot_sent):
             notifier.send_snapshot(
                 list(snapshot.quotes),
                 snapshot.market_signal,
+                snapshot.us_market,
                 snapshot.checked_at,
             )
+            startup_snapshot_sent = True
 
         fresh_alerts = dedupe_alerts(list(snapshot.alerts), sent_at_by_symbol, config.rules.dedupe_minutes)
         if fresh_alerts:
@@ -55,16 +59,24 @@ def run_once(config, provider: AkshareMarketDataProvider) -> MonitorRun:
     now = datetime.now()
     quotes = provider.get_etf_quotes(config.etfs)
     try:
+        us_market = provider.get_us_market_snapshot(config.us_market)
+        quotes = provider.apply_us_market_adjustment(quotes, us_market)
+    except Exception as exc:
+        print(f"美股/汇率数据获取失败：{exc}")
+        us_market = None
+
+    try:
         market_signal = provider.get_nasdaq_signal(config.nasdaq)
     except Exception as exc:
         print(f"纳指数据获取失败：{exc}")
         market_signal = None
 
-    _print_snapshot(quotes, market_signal)
-    alerts = evaluate_alerts(quotes, market_signal, config.rules, now)
+    _print_snapshot(quotes, market_signal, us_market)
+    alerts = evaluate_alerts(quotes, market_signal, us_market, config.rules, now)
     return MonitorRun(
         quotes=tuple(quotes),
         market_signal=market_signal,
+        us_market=us_market,
         alerts=tuple(alerts),
         checked_at=now,
     )
@@ -87,16 +99,29 @@ def dedupe_alerts(
     return fresh
 
 
-def _print_snapshot(quotes, market_signal) -> None:
+def _print_snapshot(quotes, market_signal, us_market) -> None:
     print("")
     print(datetime.now().isoformat(timespec="seconds"))
+    if us_market and us_market.primary:
+        print(
+            f"{us_market.primary.symbol} "
+            f"涨跌幅={_fmt_pct_from_pct(us_market.primary.change_pct)} "
+            f"更新时间={us_market.primary.updated_at or 'N/A'} "
+            f"source={us_market.primary.source}"
+        )
+    if us_market and us_market.fx:
+        print(
+            f"{us_market.fx.symbol} "
+            f"涨跌幅={_fmt_pct_from_pct(us_market.fx.change_pct)} "
+            f"更新时间={us_market.fx.updated_at or 'N/A'}"
+        )
     if market_signal:
         print(
             f"{market_signal.name}({market_signal.symbol}) "
             f"涨跌幅={_fmt_pct_from_pct(market_signal.change_pct)} "
             f"source={market_signal.source}"
         )
-    print("代码      名称                  价格      IOPV      溢价率     涨跌幅     成交额")
+    print("代码      名称                  价格      IOPV      溢价率   修正后溢价     涨跌幅     成交额")
     for quote in quotes:
         print(
             f"{quote.symbol:<8}"
@@ -104,6 +129,7 @@ def _print_snapshot(quotes, market_signal) -> None:
             f"{_fmt_num(quote.price):>8}"
             f"{_fmt_num(quote.iopv):>10}"
             f"{_fmt_pct(quote.premium_rate):>10}"
+            f"{_fmt_pct(quote.adjusted_premium_rate):>12}"
             f"{_fmt_pct_from_pct(quote.change_pct):>10}"
             f"{_fmt_cny(quote.turnover_cny):>12}"
         )

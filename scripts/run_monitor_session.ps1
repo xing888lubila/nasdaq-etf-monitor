@@ -28,9 +28,21 @@ if (-not (Test-Path -LiteralPath $Config)) {
 }
 
 if (-not $env:ETF_MONITOR_SMTP_PASSWORD) {
+    $env:ETF_MONITOR_SMTP_PASSWORD = [Environment]::GetEnvironmentVariable("ETF_MONITOR_SMTP_PASSWORD", "User")
+}
+
+if (-not $env:ETF_MONITOR_SMTP_PASSWORD) {
     Write-MonitorLog "ERROR: ETF_MONITOR_SMTP_PASSWORD is missing. Set it as a User environment variable."
     throw "ETF_MONITOR_SMTP_PASSWORD is missing"
 }
 
-& $Runner --config $Config *>> $LogFile
-
+try {
+    & $Runner --send-startup-snapshot --config $Config >> $LogFile 2>&1
+    $ExitCode = $LASTEXITCODE
+    Write-MonitorLog "ETF monitor session exited with code $ExitCode."
+    exit $ExitCode
+}
+catch {
+    Write-MonitorLog "ERROR: $($_.Exception.Message)"
+    throw
+}

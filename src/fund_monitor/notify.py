@@ -6,7 +6,7 @@ from datetime import datetime
 from email.message import EmailMessage
 
 from .config import EmailConfig, require_keys
-from .models import Alert, EtfQuote, MarketSignal
+from .models import Alert, EtfQuote, MarketSignal, USMarketSnapshot
 
 
 class EmailNotifier:
@@ -24,9 +24,10 @@ class EmailNotifier:
         self,
         quotes: list[EtfQuote],
         market_signal: MarketSignal | None,
+        us_market: USMarketSnapshot | None,
         checked_at: datetime,
     ) -> None:
-        body = format_snapshot(quotes, market_signal, checked_at)
+        body = format_snapshot(quotes, market_signal, us_market, checked_at)
         self._deliver("【纳指 ETF 实时快照】", body)
 
     def _deliver(self, subject: str, body: str) -> None:
@@ -66,6 +67,8 @@ def format_alerts(alerts: list[Alert]) -> str:
                 f"当前价格：{_format_float(quote.price)}",
                 f"IOPV：{_format_float(quote.iopv)}",
                 f"溢价率：{_format_percent(quote.premium_rate)}",
+                f"修正后参考值：{_format_float(quote.adjusted_reference_value)}",
+                f"修正后溢价率：{_format_percent(quote.adjusted_premium_rate)}",
                 f"涨跌幅：{_format_percent_from_pct(quote.change_pct)}",
                 f"成交额：{_format_cny(quote.turnover_cny)}",
                 f"ETF更新时间：{quote.updated_at or 'N/A'}",
@@ -84,9 +87,13 @@ def format_alerts(alerts: list[Alert]) -> str:
 def format_snapshot(
     quotes: list[EtfQuote],
     market_signal: MarketSignal | None,
+    us_market: USMarketSnapshot | None,
     checked_at: datetime,
 ) -> str:
     lines = ["【纳指 ETF 实时快照】", f"检查时间：{checked_at.isoformat(timespec='seconds')}", ""]
+    if us_market:
+        lines.extend(_format_us_market_snapshot(us_market))
+        lines.append("")
     if market_signal:
         lines.append(
             f"{market_signal.name}({market_signal.symbol})："
@@ -103,6 +110,8 @@ def format_snapshot(
                 f"当前价格：{_format_float(quote.price)}",
                 f"IOPV：{_format_float(quote.iopv)}",
                 f"溢价率：{_format_percent(quote.premium_rate)}",
+                f"修正后参考值：{_format_float(quote.adjusted_reference_value)}",
+                f"修正后溢价率：{_format_percent(quote.adjusted_premium_rate)}",
                 f"涨跌幅：{_format_percent_from_pct(quote.change_pct)}",
                 f"成交额：{_format_cny(quote.turnover_cny)}",
                 f"ETF更新时间：{quote.updated_at or 'N/A'}",
@@ -112,6 +121,28 @@ def format_snapshot(
 
     lines.append("此邮件只做监控提醒，不构成买入建议；下单前请在东方财富证券 App 再确认。")
     return "\n".join(lines).strip()
+
+
+def _format_us_market_snapshot(snapshot: USMarketSnapshot) -> list[str]:
+    lines = ["美股/汇率修正："]
+    if snapshot.primary:
+        lines.append(_format_us_quote("主指标", snapshot.primary))
+    if snapshot.fallback:
+        lines.append(_format_us_quote("备用", snapshot.fallback))
+    if snapshot.fx:
+        lines.append(_format_us_quote("汇率", snapshot.fx))
+    for quote in snapshot.mega_caps:
+        lines.append(_format_us_quote("权重股", quote))
+    lines.append(f"修正因子：{_format_percent(snapshot.adjustment_rate)}（{snapshot.adjustment_source or 'N/A'}）")
+    return lines
+
+
+def _format_us_quote(label: str, quote) -> str:
+    return (
+        f"{label} {quote.symbol}：{_format_float(quote.price)}，"
+        f"涨跌幅 {_format_percent_from_pct(quote.change_pct)}，"
+        f"更新时间 {quote.updated_at or 'N/A'}，来源 {quote.source}"
+    )
 
 
 def _format_float(value: float | None) -> str:

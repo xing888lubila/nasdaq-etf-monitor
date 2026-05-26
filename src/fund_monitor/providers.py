@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import math
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
+from datetime import datetime
 from io import StringIO
 from typing import Iterable
 
 import requests
 
-from .config import NasdaqConfig
-from .models import EtfQuote, MarketSignal
+from .config import NasdaqConfig, USMarketConfig
+from .models import EtfQuote, MarketSignal, USMarketQuote, USMarketSnapshot
 
 
 EASTMONEY_NDX_URL = (
@@ -17,6 +19,7 @@ EASTMONEY_NDX_URL = (
 )
 EASTMONEY_ETF_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
 EASTMONEY_ETF_FIELDS = "f12,f14,f2,f3,f6,f402,f441,f297,f124"
+YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 
 
 class MarketDataError(RuntimeError):
@@ -70,6 +73,59 @@ class AkshareMarketDataProvider:
                 )
             )
         return sorted(quotes, key=lambda item: item.symbol)
+
+    def get_us_market_snapshot(self, config: USMarketConfig) -> USMarketSnapshot | None:
+        if not config.enabled:
+            return None
+
+        primary = self._get_yahoo_chart_quote(config.primary_symbol)
+        fallback = self._get_yahoo_chart_quote(config.fallback_symbol)
+        fx = self._get_yahoo_chart_quote(config.fx_symbol)
+        mega_caps = tuple(
+            quote for symbol in config.mega_cap_symbols if (quote := self._get_yahoo_chart_quote(symbol)) is not None
+        )
+
+        adjustment_quote = primary or fallback
+        adjustment_rate = _combined_adjustment_rate(adjustment_quote, fx)
+        adjustment_source = None
+        if adjustment_quote:
+            adjustment_source = adjustment_quote.symbol
+            if fx and fx.change_pct is not None:
+                adjustment_source = f"{adjustment_source}+{fx.symbol}"
+
+        return USMarketSnapshot(
+            primary=primary,
+            fallback=fallback,
+            fx=fx,
+            mega_caps=mega_caps,
+            adjustment_rate=adjustment_rate,
+            adjustment_source=adjustment_source,
+            checked_at=datetime.now(),
+        )
+
+    def apply_us_market_adjustment(
+        self,
+        quotes: list[EtfQuote],
+        snapshot: USMarketSnapshot | None,
+    ) -> list[EtfQuote]:
+        if snapshot is None or snapshot.adjustment_rate is None:
+            return quotes
+
+        adjusted: list[EtfQuote] = []
+        multiplier = 1 + snapshot.adjustment_rate
+        for quote in quotes:
+            if quote.iopv is None or quote.price is None or quote.iopv <= 0 or multiplier <= 0:
+                adjusted.append(quote)
+                continue
+            adjusted_reference_value = quote.iopv * multiplier
+            adjusted.append(
+                replace(
+                    quote,
+                    adjusted_reference_value=adjusted_reference_value,
+                    adjusted_premium_rate=quote.price / adjusted_reference_value - 1,
+                )
+            )
+        return adjusted
 
     def _get_etf_quotes_from_akshare(self, symbols: list[str]) -> list[EtfQuote]:
         ak = _import_akshare()
@@ -161,6 +217,46 @@ class AkshareMarketDataProvider:
             source="eastmoney.push2.NDX",
         )
 
+    def _get_yahoo_chart_quote(self, symbol: str) -> USMarketQuote | None:
+        response = requests.get(
+            YAHOO_CHART_URL.format(symbol=symbol),
+            params={"range": "1d", "interval": "1m", "includePrePost": "true"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        results = payload.get("chart", {}).get("result") or []
+        if not results:
+            raise MarketDataError(f"Yahoo chart returned no data for {symbol}")
+
+        data = results[0]
+        meta = data.get("meta", {})
+        timestamps = data.get("timestamp") or []
+        closes = data.get("indicators", {}).get("quote", [{}])[0].get("close", [])
+        latest_point = _latest_chart_point(timestamps, closes)
+
+        if latest_point:
+            updated_at_ts, price = latest_point
+        else:
+            updated_at_ts = _to_float(meta.get("regularMarketTime"))
+            price = _to_float(meta.get("regularMarketPrice"))
+
+        previous_close = _to_float(meta.get("chartPreviousClose")) or _to_float(meta.get("previousClose"))
+        change_pct = None
+        if price is not None and previous_close is not None and previous_close > 0:
+            change_pct = (price / previous_close - 1) * 100
+
+        return USMarketQuote(
+            symbol=str(meta.get("symbol", symbol)),
+            name=str(meta.get("shortName") or meta.get("longName") or meta.get("symbol", symbol)),
+            price=price,
+            previous_close=previous_close,
+            change_pct=change_pct,
+            updated_at=_format_unix_timestamp(updated_at_ts),
+            source="yahoo.chart",
+        )
+
 
 def _import_akshare():
     try:
@@ -200,9 +296,39 @@ def _format_eastmoney_timestamp(value: object) -> str | None:
     timestamp = _to_float(value)
     if timestamp is None or timestamp <= 0:
         return None
-    from datetime import datetime
-
     return datetime.fromtimestamp(timestamp).isoformat(sep=" ", timespec="seconds")
+
+
+def _format_unix_timestamp(value: object) -> str | None:
+    timestamp = _to_float(value)
+    if timestamp is None or timestamp <= 0:
+        return None
+    return datetime.fromtimestamp(timestamp).isoformat(sep=" ", timespec="seconds")
+
+
+def _latest_chart_point(timestamps: list[object], closes: list[object]) -> tuple[float, float] | None:
+    latest: tuple[float, float] | None = None
+    for timestamp, close in zip(timestamps, closes):
+        close_value = _to_float(close)
+        timestamp_value = _to_float(timestamp)
+        if close_value is None or timestamp_value is None:
+            continue
+        latest = (timestamp_value, close_value)
+    return latest
+
+
+def _combined_adjustment_rate(
+    market_quote: USMarketQuote | None,
+    fx_quote: USMarketQuote | None,
+) -> float | None:
+    if market_quote is None or market_quote.change_pct is None:
+        return None
+
+    market_rate = market_quote.change_pct / 100
+    fx_rate = 0.0
+    if fx_quote and fx_quote.change_pct is not None:
+        fx_rate = fx_quote.change_pct / 100
+    return (1 + market_rate) * (1 + fx_rate) - 1
 
 
 def _to_float(value: object) -> float | None:

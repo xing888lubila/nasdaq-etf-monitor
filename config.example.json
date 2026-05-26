@@ -9,9 +9,25 @@
   ],
   "rules": {
     "max_premium_rate": 0.015,
+    "max_adjusted_premium_rate": 0.015,
+    "use_adjusted_premium": true,
     "min_turnover_cny": 100000000,
     "require_nasdaq_down": true,
+    "market_max_change_pct": -2.5,
+    "stale_after_seconds": 120,
     "dedupe_minutes": 60
+  },
+  "us_market": {
+    "enabled": true,
+    "primary_symbol": "NQ=F",
+    "fallback_symbol": "QQQ",
+    "fx_symbol": "CNH=X",
+    "mega_cap_symbols": [
+      "AAPL",
+      "MSFT",
+      "NVDA"
+    ],
+    "stale_after_minutes": 720
   },
   "nasdaq": {
     "enabled": true,

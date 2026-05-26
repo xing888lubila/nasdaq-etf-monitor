@@ -15,7 +15,7 @@ $Action = New-ScheduledTaskAction `
 $Trigger = New-ScheduledTaskTrigger `
     -Weekly `
     -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday `
-    -At ([datetime]::Today.AddHours(9).AddMinutes(25))
+    -At ([datetime]::Today.AddHours(9).AddMinutes(20))
 
 $Settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Hours 6) `
@@ -33,6 +33,5 @@ Register-ScheduledTask `
     -Force | Out-Null
 
 Write-Host "Installed scheduled task: $TaskName"
-Write-Host "Schedule: Monday-Friday 09:25, stops after 6 hours."
+Write-Host "Schedule: Monday-Friday 09:20, stops after 6 hours."
 Write-Host "Logs: $ProjectRoot\logs"
-
