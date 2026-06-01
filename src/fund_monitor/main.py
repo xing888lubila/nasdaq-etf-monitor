@@ -18,8 +18,10 @@ def main() -> int:
     parser.add_argument("--once", action="store_true", help="只检查一次后退出")
     parser.add_argument("--send-snapshot", action="store_true", help="发送当前全部 ETF 明细")
     parser.add_argument("--send-startup-snapshot", action="store_true", help="启动后只发送一次快照")
+    parser.add_argument("--max-runtime-seconds", type=int, help="持续运行的最长秒数，到时正常退出")
     args = parser.parse_args()
 
+    started_at = datetime.now()
     project_root = Path.cwd()
     config_path = resolve_config_path(args.config, project_root)
     config = load_config(config_path)
@@ -52,7 +54,15 @@ def main() -> int:
 
         if args.once:
             return 0
-        time.sleep(config.poll_interval_seconds)
+        if args.max_runtime_seconds is not None:
+            elapsed_seconds = (datetime.now() - started_at).total_seconds()
+            remaining_seconds = args.max_runtime_seconds - elapsed_seconds
+            if remaining_seconds <= 0:
+                print(f"{datetime.now().isoformat(timespec='seconds')} 已达到最大运行时长，正常退出")
+                return 0
+            time.sleep(min(config.poll_interval_seconds, remaining_seconds))
+        else:
+            time.sleep(config.poll_interval_seconds)
 
 
 def run_once(config, provider: AkshareMarketDataProvider) -> MonitorRun:
