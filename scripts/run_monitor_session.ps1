@@ -37,7 +37,7 @@ if (-not $env:ETF_MONITOR_SMTP_PASSWORD) {
 }
 
 try {
-    & $Runner --send-startup-snapshot --config $Config >> $LogFile 2>&1
+    & $Runner --send-startup-snapshot --max-runtime-seconds 21000 --config $Config >> $LogFile 2>&1
     $ExitCode = $LASTEXITCODE
     Write-MonitorLog "ETF monitor session exited with code $ExitCode."
     exit $ExitCode
