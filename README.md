@@ -205,6 +205,10 @@ The Windows scheduled task starts at 09:20 on weekdays, sends one startup snapsh
 
 The scheduled task uses `--max-runtime-seconds 21000`, so it exits cleanly after covering the market close.
 
+计划任务使用 `--max-runtime-seconds 21000`，因此会在覆盖收盘后自动正常退出。
+
+The scheduled task uses `--max-runtime-seconds 21000`, so it exits cleanly after covering the market close.
+
 安装计划任务：
 
 Install the scheduled task:
