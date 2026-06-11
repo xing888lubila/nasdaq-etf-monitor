@@ -12,8 +12,9 @@ A semi-automatic Nasdaq ETF monitor for individual investors. It reads free mark
 
 - 监控 5 只纳指相关场内 ETF：`513100`、`159941`、`159632`、`159659`、`513300`
 - 读取当前价格、涨跌幅、成交额、IOPV 和溢价率
-- 读取 `NQ=F`、`QQQ`、`AAPL`、`MSFT`、`NVDA`、`CNH=X`
+- 读取 `NQ=F`、`QQQ`、`^NDX`、`AAPL`、`MSFT`、`NVDA`、`CNH=X`
 - 计算普通溢价率和美股/汇率修正后溢价率
+- 在 14:30 发送 NQ=F 北京时间 09:30-14:30 趋势快照和规则模型判断
 - 按规则发送邮件提醒，默认只提醒人工确认，不自动交易
 - 支持一次性快照邮件，用于测试当前行情和邮箱配置
 - 支持启动时发送一次开盘前快照
@@ -22,8 +23,9 @@ A semi-automatic Nasdaq ETF monitor for individual investors. It reads free mark
 
 - Monitors five Nasdaq-related exchange-traded ETFs: `513100`, `159941`, `159632`, `159659`, `513300`
 - Reads current price, change percentage, turnover, IOPV, and premium rate
-- Reads `NQ=F`, `QQQ`, `AAPL`, `MSFT`, `NVDA`, and `CNH=X`
+- Reads `NQ=F`, `QQQ`, `^NDX`, `AAPL`, `MSFT`, `NVDA`, and `CNH=X`
 - Calculates both regular premium rate and US-market-adjusted premium rate
+- Sends a 14:30 NQ=F trend snapshot for the Beijing-time 09:30-14:30 window with rule-based interpretation
 - Sends email alerts based on rules, with manual confirmation required before trading
 - Supports one-time snapshot emails for testing market data and email setup
 - Supports a startup snapshot before the A-share market opens
@@ -58,6 +60,10 @@ adjusted_premium_rate = current_price / adjusted_reference_value - 1
 
 The adjusted premium rate estimates whether the domestic ETF is still expensive after considering US futures and USD/CNH movement. It is an estimate, not official NAV.
 
+14:30 的 NQ=F 趋势模型使用北京时间 09:30-14:30 的 5 分钟分时数据，计算区间涨跌幅、后段动量和最大回撤，并输出 `偏空`、`震荡偏空`、`震荡`、`震荡偏多` 或 `偏多`。这个结果只用于判断当晚纳指情绪，不是保证性预测。
+
+The 14:30 NQ=F trend model uses five-minute bars from 09:30 to 14:30 Beijing time. It calculates session change, late-session momentum, and maximum drawdown, then labels the trend as bearish, mildly bearish, neutral, mildly bullish, or bullish. This is a sentiment signal for the coming US session, not a guaranteed forecast.
+
 ## 项目结构 / Project Structure
 
 ```text
@@ -68,6 +74,7 @@ The adjusted premium rate estimates whether the domestic ETF is still expensive 
 ├── pyproject.toml             # Python package metadata
 ├── scripts/
 │   ├── install_market_task.ps1 # 安装计划任务 / Install scheduled task
+│   ├── run_futures_trend_snapshot.ps1 # 14:30 期货趋势快照 / 14:30 futures trend snapshot
 │   ├── run_monitor_session.ps1 # 计划任务运行脚本 / Scheduled session runner
 │   ├── start_monitor_now.ps1   # 手动启动 / Start manually
 │   └── stop_monitor.ps1        # 手动停止 / Stop manually
@@ -124,6 +131,7 @@ Edit `config.json`:
 - `rules.dedupe_minutes`: 同一 ETF 重复提醒间隔
 - `us_market.primary_symbol`: 主美股指标，默认 `NQ=F`
 - `us_market.fallback_symbol`: 备用美股指标，默认 `QQQ`
+- `us_market.nasdaq_index_symbol`: 纳指收盘指标，默认 `^NDX`
 - `us_market.fx_symbol`: 汇率指标，默认 `CNH=X`
 - `us_market.mega_cap_symbols`: 辅助确认的核心权重股
 - `email`: SMTP 邮件配置
@@ -140,6 +148,7 @@ Edit `config.json`:
 - `rules.dedupe_minutes`: cooldown for repeated alerts on the same ETF
 - `us_market.primary_symbol`: primary US-market signal, default `NQ=F`
 - `us_market.fallback_symbol`: fallback US-market signal, default `QQQ`
+- `us_market.nasdaq_index_symbol`: Nasdaq-100 index close signal, default `^NDX`
 - `us_market.fx_symbol`: FX signal, default `CNH=X`
 - `us_market.mega_cap_symbols`: mega-cap confirmation symbols
 - `email`: SMTP email settings
@@ -170,6 +179,14 @@ Run one check without a snapshot email:
 fund-monitor --once --config config.json
 ```
 
+发送一次 NQ=F 下午趋势快照：
+
+Send one NQ=F afternoon trend snapshot:
+
+```powershell
+fund-monitor --once --send-futures-trend --config config.json
+```
+
 持续监控：
 
 Run continuously:
@@ -180,9 +197,9 @@ fund-monitor --config config.json
 
 ## 交易时段自动运行 / Trading-Session Scheduling
 
-Windows 计划任务会在工作日 09:20 启动，先发送一次启动快照，然后运行约 6 小时，覆盖 A 股交易时段。
+Windows 计划任务会在工作日 09:20 启动，先发送一次启动快照，然后运行约 6 小时，覆盖 A 股交易时段。另一个计划任务会在工作日 14:30 发送一次 NQ=F 下午趋势快照。
 
-The Windows scheduled task starts at 09:20 on weekdays, sends one startup snapshot, and runs for about six hours, covering A-share trading sessions.
+The Windows scheduled task starts at 09:20 on weekdays, sends one startup snapshot, and runs for about six hours, covering A-share trading sessions. A second scheduled task sends one NQ=F afternoon trend snapshot at 14:30 on weekdays.
 
 计划任务使用 `--max-runtime-seconds 21000`，因此会在覆盖收盘后自动正常退出。
 
@@ -218,6 +235,7 @@ Log path:
 
 ```text
 logs\monitor-YYYYMMDD.log
+logs\futures-trend-YYYYMMDD.log
 ```
 
 ## 上传到 GitHub / Uploading to GitHub

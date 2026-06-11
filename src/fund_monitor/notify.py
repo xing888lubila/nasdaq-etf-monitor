@@ -6,7 +6,7 @@ from datetime import datetime
 from email.message import EmailMessage
 
 from .config import EmailConfig, require_keys
-from .models import Alert, EtfQuote, MarketSignal, USMarketSnapshot
+from .models import Alert, EtfQuote, FuturesTrendSnapshot, MarketSignal, USMarketSnapshot
 
 
 class EmailNotifier:
@@ -29,6 +29,10 @@ class EmailNotifier:
     ) -> None:
         body = format_snapshot(quotes, market_signal, us_market, checked_at)
         self._deliver("【纳指 ETF 实时快照】", body)
+
+    def send_futures_trend_snapshot(self, snapshot: FuturesTrendSnapshot) -> None:
+        body = format_futures_trend_snapshot(snapshot)
+        self._deliver("【NQ=F 下午趋势快照】", body)
 
     def _deliver(self, subject: str, body: str) -> None:
         if not self.config.enabled:
@@ -129,6 +133,8 @@ def _format_us_market_snapshot(snapshot: USMarketSnapshot) -> list[str]:
         lines.append(_format_us_quote("主指标", snapshot.primary))
     if snapshot.fallback:
         lines.append(_format_us_quote("备用", snapshot.fallback))
+    if snapshot.nasdaq_index:
+        lines.append(_format_us_quote("纳指收盘", snapshot.nasdaq_index))
     if snapshot.fx:
         lines.append(_format_us_quote("汇率", snapshot.fx))
     for quote in snapshot.mega_caps:
@@ -143,6 +149,44 @@ def _format_us_quote(label: str, quote) -> str:
         f"涨跌幅 {_format_percent_from_pct(quote.change_pct)}，"
         f"更新时间 {quote.updated_at or 'N/A'}，来源 {quote.source}"
     )
+
+
+def format_futures_trend_snapshot(snapshot: FuturesTrendSnapshot) -> str:
+    lines = [
+        "【NQ=F 下午趋势快照】",
+        f"检查时间：{snapshot.checked_at.isoformat(timespec='seconds')}",
+        "",
+        f"{snapshot.symbol} {snapshot.name}",
+        f"数据区间：{_format_dt(snapshot.start_at)} - {_format_dt(snapshot.end_at)}",
+        f"有效分时点：{len(snapshot.points)}",
+        f"起点价格：{_format_float(snapshot.start_price)}",
+        f"最新价格：{_format_float(snapshot.end_price)}",
+        f"区间涨跌幅：{_format_percent_from_pct(snapshot.change_pct)}",
+        f"区间最高：{_format_float(snapshot.high_price)}",
+        f"区间最低：{_format_float(snapshot.low_price)}",
+        f"最大回撤：{_format_percent_from_pct(snapshot.max_drawdown_pct)}",
+        f"后段动量：{_format_percent_from_pct(snapshot.late_change_pct)}",
+        "",
+        f"趋势结论：{snapshot.trend_label}",
+        f"模型判断：{snapshot.prediction}",
+        "",
+        "判断依据：",
+    ]
+    lines.extend(f"- {item}" for item in snapshot.rationale)
+    lines.extend(
+        [
+            "",
+            "说明：这是基于 NQ=F 白天分时趋势的规则模型预测，只做当晚纳指方向观察，不构成买入建议。",
+            f"来源：{snapshot.source}",
+        ]
+    )
+    return "\n".join(lines).strip()
+
+
+def _format_dt(value: datetime | None) -> str:
+    if value is None:
+        return "N/A"
+    return value.isoformat(sep=" ", timespec="minutes")
 
 
 def _format_float(value: float | None) -> str:

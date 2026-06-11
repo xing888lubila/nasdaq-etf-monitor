@@ -133,6 +133,7 @@ def _us_market(change_pct: float) -> USMarketSnapshot:
     return USMarketSnapshot(
         primary=quote,
         fallback=None,
+        nasdaq_index=None,
         fx=None,
         mega_caps=(),
         adjustment_rate=change_pct / 100,

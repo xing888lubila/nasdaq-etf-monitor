@@ -3,14 +3,16 @@ from __future__ import annotations
 import math
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, time
 from io import StringIO
 from typing import Iterable
+from urllib.parse import quote as url_quote
+from zoneinfo import ZoneInfo
 
 import requests
 
 from .config import NasdaqConfig, USMarketConfig
-from .models import EtfQuote, MarketSignal, USMarketQuote, USMarketSnapshot
+from .models import EtfQuote, FuturesTrendPoint, FuturesTrendSnapshot, MarketSignal, USMarketQuote, USMarketSnapshot
 
 
 EASTMONEY_NDX_URL = (
@@ -78,11 +80,12 @@ class AkshareMarketDataProvider:
         if not config.enabled:
             return None
 
-        primary = self._get_yahoo_chart_quote(config.primary_symbol)
-        fallback = self._get_yahoo_chart_quote(config.fallback_symbol)
-        fx = self._get_yahoo_chart_quote(config.fx_symbol)
+        primary = self._try_get_yahoo_chart_quote(config.primary_symbol)
+        fallback = self._try_get_yahoo_chart_quote(config.fallback_symbol)
+        nasdaq_index = self._try_get_yahoo_chart_quote(config.nasdaq_index_symbol)
+        fx = self._try_get_yahoo_chart_quote(config.fx_symbol)
         mega_caps = tuple(
-            quote for symbol in config.mega_cap_symbols if (quote := self._get_yahoo_chart_quote(symbol)) is not None
+            quote for symbol in config.mega_cap_symbols if (quote := self._try_get_yahoo_chart_quote(symbol)) is not None
         )
 
         adjustment_quote = primary or fallback
@@ -96,11 +99,45 @@ class AkshareMarketDataProvider:
         return USMarketSnapshot(
             primary=primary,
             fallback=fallback,
+            nasdaq_index=nasdaq_index,
             fx=fx,
             mega_caps=mega_caps,
             adjustment_rate=adjustment_rate,
             adjustment_source=adjustment_source,
             checked_at=datetime.now(),
+        )
+
+    def get_futures_trend_snapshot(
+        self,
+        symbol: str = "NQ=F",
+        timezone_name: str = "Asia/Shanghai",
+    ) -> FuturesTrendSnapshot:
+        local_tz = ZoneInfo(timezone_name)
+        checked_at = datetime.now(local_tz)
+        start_at = datetime.combine(checked_at.date(), time(9, 30), local_tz)
+        end_at = datetime.combine(checked_at.date(), time(14, 30), local_tz)
+        data = self._get_yahoo_chart_data(symbol, range_value="5d", interval="5m")
+        meta = data.get("meta", {})
+        timestamps = data.get("timestamp") or []
+        closes = data.get("indicators", {}).get("quote", [{}])[0].get("close", [])
+        points: list[FuturesTrendPoint] = []
+
+        for timestamp, close in zip(timestamps, closes):
+            timestamp_value = _to_float(timestamp)
+            close_value = _to_float(close)
+            if timestamp_value is None or close_value is None:
+                continue
+            point_at = datetime.fromtimestamp(timestamp_value, local_tz)
+            if start_at <= point_at <= end_at:
+                points.append(FuturesTrendPoint(timestamp=point_at, price=close_value))
+
+        name = str(meta.get("shortName") or meta.get("longName") or meta.get("symbol", symbol))
+        return _build_futures_trend_snapshot(
+            symbol=str(meta.get("symbol", symbol)),
+            name=name,
+            points=points,
+            checked_at=checked_at,
+            source="yahoo.chart",
         )
 
     def apply_us_market_adjustment(
@@ -218,19 +255,7 @@ class AkshareMarketDataProvider:
         )
 
     def _get_yahoo_chart_quote(self, symbol: str) -> USMarketQuote | None:
-        response = requests.get(
-            YAHOO_CHART_URL.format(symbol=symbol),
-            params={"range": "1d", "interval": "1m", "includePrePost": "true"},
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=15,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        results = payload.get("chart", {}).get("result") or []
-        if not results:
-            raise MarketDataError(f"Yahoo chart returned no data for {symbol}")
-
-        data = results[0]
+        data = self._get_yahoo_chart_data(symbol, range_value="1d", interval="1m")
         meta = data.get("meta", {})
         timestamps = data.get("timestamp") or []
         closes = data.get("indicators", {}).get("quote", [{}])[0].get("close", [])
@@ -256,6 +281,27 @@ class AkshareMarketDataProvider:
             updated_at=_format_unix_timestamp(updated_at_ts),
             source="yahoo.chart",
         )
+
+    def _try_get_yahoo_chart_quote(self, symbol: str) -> USMarketQuote | None:
+        try:
+            return self._get_yahoo_chart_quote(symbol)
+        except Exception as exc:
+            print(f"Yahoo chart 数据获取失败：{symbol}：{exc}")
+            return None
+
+    def _get_yahoo_chart_data(self, symbol: str, range_value: str, interval: str) -> dict:
+        response = requests.get(
+            YAHOO_CHART_URL.format(symbol=url_quote(symbol, safe="")),
+            params={"range": range_value, "interval": interval, "includePrePost": "true"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        results = payload.get("chart", {}).get("result") or []
+        if not results:
+            raise MarketDataError(f"Yahoo chart returned no data for {symbol}")
+        return results[0]
 
 
 def _import_akshare():
@@ -329,6 +375,117 @@ def _combined_adjustment_rate(
     if fx_quote and fx_quote.change_pct is not None:
         fx_rate = fx_quote.change_pct / 100
     return (1 + market_rate) * (1 + fx_rate) - 1
+
+
+def _build_futures_trend_snapshot(
+    symbol: str,
+    name: str,
+    points: list[FuturesTrendPoint],
+    checked_at: datetime,
+    source: str,
+) -> FuturesTrendSnapshot:
+    if not points:
+        return FuturesTrendSnapshot(
+            symbol=symbol,
+            name=name,
+            points=(),
+            start_at=None,
+            end_at=None,
+            start_price=None,
+            end_price=None,
+            change_pct=None,
+            high_price=None,
+            low_price=None,
+            max_drawdown_pct=None,
+            late_change_pct=None,
+            trend_label="数据不足",
+            prediction="无法判断，当天 09:30-14:30 没有可用的 NQ=F 分时点。",
+            rationale=("没有足够分时数据，可能是数据源延迟、假期或网络问题。",),
+            source=source,
+            checked_at=checked_at,
+        )
+
+    prices = [point.price for point in points]
+    start_price = prices[0]
+    end_price = prices[-1]
+    change_pct = (end_price / start_price - 1) * 100 if start_price > 0 else None
+    high_price = max(prices)
+    low_price = min(prices)
+    max_drawdown_pct = _max_drawdown_pct(prices)
+    late_change_pct = _late_change_pct(prices)
+    trend_label, prediction, rationale = _classify_futures_trend(change_pct, late_change_pct, max_drawdown_pct, len(points))
+
+    return FuturesTrendSnapshot(
+        symbol=symbol,
+        name=name,
+        points=tuple(points),
+        start_at=points[0].timestamp,
+        end_at=points[-1].timestamp,
+        start_price=start_price,
+        end_price=end_price,
+        change_pct=change_pct,
+        high_price=high_price,
+        low_price=low_price,
+        max_drawdown_pct=max_drawdown_pct,
+        late_change_pct=late_change_pct,
+        trend_label=trend_label,
+        prediction=prediction,
+        rationale=tuple(rationale),
+        source=source,
+        checked_at=checked_at,
+    )
+
+
+def _max_drawdown_pct(prices: list[float]) -> float | None:
+    if not prices:
+        return None
+    peak = prices[0]
+    max_drawdown = 0.0
+    for price in prices:
+        if price > peak:
+            peak = price
+        if peak > 0:
+            max_drawdown = min(max_drawdown, (price / peak - 1) * 100)
+    return max_drawdown
+
+
+def _late_change_pct(prices: list[float]) -> float | None:
+    if len(prices) < 3:
+        return None
+    start_index = max(0, int(len(prices) * 2 / 3) - 1)
+    start_price = prices[start_index]
+    if start_price <= 0:
+        return None
+    return (prices[-1] / start_price - 1) * 100
+
+
+def _classify_futures_trend(
+    change_pct: float | None,
+    late_change_pct: float | None,
+    max_drawdown_pct: float | None,
+    point_count: int,
+) -> tuple[str, str, list[str]]:
+    if change_pct is None or point_count < 3:
+        return "数据不足", "无法判断，分时点数量不足。", [f"有效分时点数量：{point_count}。"]
+
+    late = late_change_pct or 0.0
+    drawdown = max_drawdown_pct or 0.0
+    score = change_pct * 0.7 + late * 0.3
+    rationale = [
+        f"09:30-14:30 区间涨跌幅 {change_pct:.2f}%。",
+        f"后段动量 {late:.2f}%。",
+        f"区间最大回撤 {drawdown:.2f}%。",
+    ]
+
+    if score <= -0.8 or (change_pct <= -0.8 and late <= 0):
+        return "偏空", "NQ=F 白天明显走弱，当晚纳指偏弱概率较高；适合作为看空定投的重点观察日。", rationale
+    if score <= -0.3 or (change_pct < 0 and late <= -0.2):
+        return "震荡偏空", "NQ=F 白天偏弱但强度一般，当晚纳指有走弱风险；适合提高关注但不宜只凭该信号重仓。", rationale
+    if score >= 0.8 or (change_pct >= 0.8 and late >= 0):
+        return "偏多", "NQ=F 白天明显走强，当晚纳指偏强概率较高；看空定投信号较弱。", rationale
+    if score >= 0.3 or (change_pct > 0 and late >= 0.2):
+        return "震荡偏多", "NQ=F 白天略强，当晚纳指下跌预期不明显；看空定投需要等待更强回落信号。", rationale
+    return "震荡", "NQ=F 白天方向不清晰，当晚纳指走势不宜提前下结论。", rationale
 
 
 def _to_float(value: object) -> float | None:

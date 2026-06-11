@@ -2,10 +2,16 @@ $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $SessionScript = Join-Path $ProjectRoot "scripts\run_monitor_session.ps1"
+$FuturesTrendScript = Join-Path $ProjectRoot "scripts\run_futures_trend_snapshot.ps1"
 $TaskName = "ETFMonitor"
+$FuturesTrendTaskName = "ETFMonitorFuturesTrend"
 
 if (-not (Test-Path -LiteralPath $SessionScript)) {
     throw "session script not found: $SessionScript"
+}
+
+if (-not (Test-Path -LiteralPath $FuturesTrendScript)) {
+    throw "futures trend script not found: $FuturesTrendScript"
 }
 
 $Action = New-ScheduledTaskAction `
@@ -32,6 +38,32 @@ Register-ScheduledTask `
     -Description "Run Nasdaq ETF monitor on weekday A-share trading sessions." `
     -Force | Out-Null
 
+$FuturesTrendAction = New-ScheduledTaskAction `
+    -Execute "powershell.exe" `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$FuturesTrendScript`""
+
+$FuturesTrendTrigger = New-ScheduledTaskTrigger `
+    -Weekly `
+    -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday `
+    -At ([datetime]::Today.AddHours(14).AddMinutes(30))
+
+$FuturesTrendSettings = New-ScheduledTaskSettingsSet `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 10) `
+    -RestartCount 2 `
+    -RestartInterval (New-TimeSpan -Minutes 1) `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries
+
+Register-ScheduledTask `
+    -TaskName $FuturesTrendTaskName `
+    -Action $FuturesTrendAction `
+    -Trigger $FuturesTrendTrigger `
+    -Settings $FuturesTrendSettings `
+    -Description "Send NQ=F China-session futures trend snapshot at 14:30 on weekdays." `
+    -Force | Out-Null
+
 Write-Host "Installed scheduled task: $TaskName"
 Write-Host "Schedule: Monday-Friday 09:20, stops after 6 hours."
+Write-Host "Installed scheduled task: $FuturesTrendTaskName"
+Write-Host "Schedule: Monday-Friday 14:30, sends one NQ=F futures trend snapshot."
 Write-Host "Logs: $ProjectRoot\logs"

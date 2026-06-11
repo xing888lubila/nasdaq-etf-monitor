@@ -8,8 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from fund_monitor.models import EtfQuote, USMarketQuote, USMarketSnapshot
-from fund_monitor.providers import AkshareMarketDataProvider
+from fund_monitor.models import EtfQuote, FuturesTrendPoint, USMarketQuote, USMarketSnapshot
+from fund_monitor.providers import AkshareMarketDataProvider, _build_futures_trend_snapshot
 
 
 class ProviderTests(unittest.TestCase):
@@ -28,6 +28,7 @@ class ProviderTests(unittest.TestCase):
         snapshot = USMarketSnapshot(
             primary=_quote("NQ=F", -2.0),
             fallback=None,
+            nasdaq_index=None,
             fx=_quote("CNH=X", 0.5),
             mega_caps=(),
             adjustment_rate=(1 - 0.02) * (1 + 0.005) - 1,
@@ -39,6 +40,25 @@ class ProviderTests(unittest.TestCase):
 
         self.assertAlmostEqual(adjusted.adjusted_reference_value or 0, 1.9698, places=4)
         self.assertAlmostEqual(adjusted.adjusted_premium_rate or 0, 0.0255, places=4)
+
+    def test_futures_trend_classifies_bearish_day_session(self) -> None:
+        points = [
+            FuturesTrendPoint(datetime(2026, 6, 11, 9, 30), 100.0),
+            FuturesTrendPoint(datetime(2026, 6, 11, 10, 30), 99.0),
+            FuturesTrendPoint(datetime(2026, 6, 11, 11, 30), 98.5),
+            FuturesTrendPoint(datetime(2026, 6, 11, 14, 30), 98.0),
+        ]
+
+        snapshot = _build_futures_trend_snapshot(
+            symbol="NQ=F",
+            name="E-mini Nasdaq-100 Futures",
+            points=points,
+            checked_at=datetime(2026, 6, 11, 14, 30),
+            source="test",
+        )
+
+        self.assertEqual(snapshot.trend_label, "偏空")
+        self.assertAlmostEqual(snapshot.change_pct or 0, -2.0, places=4)
 
 
 def _quote(symbol: str, change_pct: float) -> USMarketQuote:
@@ -55,4 +75,3 @@ def _quote(symbol: str, change_pct: float) -> USMarketQuote:
 
 if __name__ == "__main__":
     unittest.main()
-

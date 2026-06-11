@@ -26,6 +26,7 @@ class USMarketConfig:
     enabled: bool = True
     primary_symbol: str = "NQ=F"
     fallback_symbol: str = "QQQ"
+    nasdaq_index_symbol: str = "^NDX"
     fx_symbol: str = "CNH=X"
     mega_cap_symbols: tuple[str, ...] = ("AAPL", "MSFT", "NVDA")
     stale_after_minutes: int = 720
@@ -87,6 +88,7 @@ def load_config(path: Path) -> MonitorConfig:
             enabled=bool(us_market_data.get("enabled", True)),
             primary_symbol=str(us_market_data.get("primary_symbol", "NQ=F")),
             fallback_symbol=str(us_market_data.get("fallback_symbol", "QQQ")),
+            nasdaq_index_symbol=str(us_market_data.get("nasdaq_index_symbol", "^NDX")),
             fx_symbol=str(us_market_data.get("fx_symbol", "CNH=X")),
             mega_cap_symbols=tuple(
                 str(item).upper() for item in us_market_data.get("mega_cap_symbols", ["AAPL", "MSFT", "NVDA"])

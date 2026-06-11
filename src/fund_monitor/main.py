@@ -18,6 +18,7 @@ def main() -> int:
     parser.add_argument("--once", action="store_true", help="只检查一次后退出")
     parser.add_argument("--send-snapshot", action="store_true", help="发送当前全部 ETF 明细")
     parser.add_argument("--send-startup-snapshot", action="store_true", help="启动后只发送一次快照")
+    parser.add_argument("--send-futures-trend", action="store_true", help="发送 NQ=F 中国交易时段下午趋势快照")
     parser.add_argument("--max-runtime-seconds", type=int, help="持续运行的最长秒数，到时正常退出")
     args = parser.parse_args()
 
@@ -31,6 +32,16 @@ def main() -> int:
     startup_snapshot_sent = False
 
     print(f"Using config: {config_path}")
+    if args.send_futures_trend:
+        trend_snapshot = provider.get_futures_trend_snapshot(config.us_market.primary_symbol)
+        notifier.send_futures_trend_snapshot(trend_snapshot)
+        print(
+            f"{datetime.now().isoformat(timespec='seconds')} "
+            f"已发送 NQ=F 趋势快照：{trend_snapshot.trend_label}"
+        )
+        if args.once:
+            return 0
+
     while True:
         snapshot = run_once(config, provider)
         if args.send_snapshot or (args.send_startup_snapshot and not startup_snapshot_sent):

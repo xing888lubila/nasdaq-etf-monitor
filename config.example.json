@@ -21,6 +21,7 @@
     "enabled": true,
     "primary_symbol": "NQ=F",
     "fallback_symbol": "QQQ",
+    "nasdaq_index_symbol": "^NDX",
     "fx_symbol": "CNH=X",
     "mega_cap_symbols": [
       "AAPL",
