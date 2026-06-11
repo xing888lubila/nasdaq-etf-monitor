@@ -41,6 +41,18 @@ class USMarketQuote:
 
 
 @dataclass(frozen=True)
+class USIndexTrend:
+    symbol: str
+    name: str
+    latest_close: float | None
+    latest_date: str | None
+    one_day_change_pct: float | None
+    three_day_change_pct: float | None
+    five_day_change_pct: float | None
+    source: str
+
+
+@dataclass(frozen=True)
 class FuturesTrendPoint:
     timestamp: datetime
     price: float
@@ -72,6 +84,7 @@ class USMarketSnapshot:
     primary: USMarketQuote | None
     fallback: USMarketQuote | None
     nasdaq_index: USMarketQuote | None
+    nasdaq_index_trend: USIndexTrend | None
     fx: USMarketQuote | None
     mega_caps: tuple[USMarketQuote, ...]
     adjustment_rate: float | None

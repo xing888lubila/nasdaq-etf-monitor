@@ -17,7 +17,6 @@ class AlertTierConfig:
     max_premium_rate: float = 0.0
     max_adjusted_premium_rate: float | None = None
     min_turnover_cny: float = 100_000_000
-    require_us_weak: bool = False
 
 
 @dataclass(frozen=True)
@@ -26,8 +25,6 @@ class RuleConfig:
     max_adjusted_premium_rate: float = 0.015
     use_adjusted_premium: bool = True
     min_turnover_cny: float = 100_000_000
-    require_nasdaq_down: bool = True
-    market_max_change_pct: float = -2.5
     stale_after_seconds: int = 120
     dedupe_minutes: int = 60
     alert_tiers: tuple[AlertTierConfig, ...] = (
@@ -37,7 +34,6 @@ class RuleConfig:
             max_premium_rate=0.03,
             max_adjusted_premium_rate=None,
             min_turnover_cny=100_000_000,
-            require_us_weak=False,
         ),
         AlertTierConfig(
             name="重点提醒",
@@ -45,7 +41,6 @@ class RuleConfig:
             max_premium_rate=0.02,
             max_adjusted_premium_rate=0.02,
             min_turnover_cny=100_000_000,
-            require_us_weak=False,
         ),
         AlertTierConfig(
             name="强抄底提醒",
@@ -53,7 +48,6 @@ class RuleConfig:
             max_premium_rate=0.015,
             max_adjusted_premium_rate=0.015,
             min_turnover_cny=100_000_000,
-            require_us_weak=True,
         ),
         AlertTierConfig(
             name="极端提醒",
@@ -61,7 +55,6 @@ class RuleConfig:
             max_premium_rate=0.01,
             max_adjusted_premium_rate=0.01,
             min_turnover_cny=100_000_000,
-            require_us_weak=True,
         ),
     )
 
@@ -125,8 +118,6 @@ def load_config(path: Path) -> MonitorConfig:
             ),
             use_adjusted_premium=bool(rules_data.get("use_adjusted_premium", True)),
             min_turnover_cny=float(rules_data.get("min_turnover_cny", 100_000_000)),
-            require_nasdaq_down=bool(rules_data.get("require_nasdaq_down", True)),
-            market_max_change_pct=float(rules_data.get("market_max_change_pct", -2.5)),
             stale_after_seconds=int(rules_data.get("stale_after_seconds", 120)),
             dedupe_minutes=int(rules_data.get("dedupe_minutes", 60)),
             alert_tiers=_load_alert_tiers(rules_data.get("alert_tiers"), default_rules.alert_tiers),
@@ -202,7 +193,6 @@ def _load_alert_tiers(value: object, defaults: tuple[AlertTierConfig, ...]) -> t
                 max_premium_rate=float(item.get("max_premium_rate", 0.0)),
                 max_adjusted_premium_rate=None if max_adjusted is None else float(max_adjusted),
                 min_turnover_cny=float(item.get("min_turnover_cny", 100_000_000)),
-                require_us_weak=bool(item.get("require_us_weak", False)),
             )
         )
     return tuple(tiers) or defaults

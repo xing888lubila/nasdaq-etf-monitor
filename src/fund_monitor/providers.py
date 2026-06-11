@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from .config import NasdaqConfig, USMarketConfig
-from .models import EtfQuote, FuturesTrendPoint, FuturesTrendSnapshot, MarketSignal, USMarketQuote, USMarketSnapshot
+from .models import EtfQuote, FuturesTrendPoint, FuturesTrendSnapshot, MarketSignal, USIndexTrend, USMarketQuote, USMarketSnapshot
 
 
 EASTMONEY_NDX_URL = (
@@ -83,6 +83,7 @@ class AkshareMarketDataProvider:
         primary = self._try_get_yahoo_chart_quote(config.primary_symbol)
         fallback = self._try_get_yahoo_chart_quote(config.fallback_symbol)
         nasdaq_index = self._try_get_yahoo_chart_quote(config.nasdaq_index_symbol)
+        nasdaq_index_trend = self._try_get_yahoo_index_trend(config.nasdaq_index_symbol)
         fx = self._try_get_yahoo_chart_quote(config.fx_symbol)
         mega_caps = tuple(
             quote for symbol in config.mega_cap_symbols if (quote := self._try_get_yahoo_chart_quote(symbol)) is not None
@@ -100,6 +101,7 @@ class AkshareMarketDataProvider:
             primary=primary,
             fallback=fallback,
             nasdaq_index=nasdaq_index,
+            nasdaq_index_trend=nasdaq_index_trend,
             fx=fx,
             mega_caps=mega_caps,
             adjustment_rate=adjustment_rate,
@@ -289,6 +291,43 @@ class AkshareMarketDataProvider:
             print(f"Yahoo chart 数据获取失败：{symbol}：{exc}")
             return None
 
+    def _try_get_yahoo_index_trend(self, symbol: str) -> USIndexTrend | None:
+        try:
+            return self._get_yahoo_index_trend(symbol)
+        except Exception as exc:
+            print(f"Yahoo index trend 数据获取失败：{symbol}：{exc}")
+            return None
+
+    def _get_yahoo_index_trend(self, symbol: str) -> USIndexTrend:
+        data = self._get_yahoo_chart_data(symbol, range_value="1mo", interval="1d")
+        meta = data.get("meta", {})
+        timestamps = data.get("timestamp") or []
+        closes = data.get("indicators", {}).get("quote", [{}])[0].get("close", [])
+        points: list[tuple[float, float]] = []
+        for timestamp, close in zip(timestamps, closes):
+            timestamp_value = _to_float(timestamp)
+            close_value = _to_float(close)
+            if timestamp_value is None or close_value is None:
+                continue
+            points.append((timestamp_value, close_value))
+
+        latest_date = None
+        latest_close = None
+        if points:
+            latest_ts, latest_close = points[-1]
+            latest_date = datetime.fromtimestamp(latest_ts).date().isoformat()
+
+        return USIndexTrend(
+            symbol=str(meta.get("symbol", symbol)),
+            name=str(meta.get("shortName") or meta.get("longName") or meta.get("symbol", symbol)),
+            latest_close=latest_close,
+            latest_date=latest_date,
+            one_day_change_pct=_trend_change_pct(points, 1),
+            three_day_change_pct=_trend_change_pct(points, 3),
+            five_day_change_pct=_trend_change_pct(points, 5),
+            source="yahoo.chart",
+        )
+
     def _get_yahoo_chart_data(self, symbol: str, range_value: str, interval: str) -> dict:
         response = requests.get(
             YAHOO_CHART_URL.format(symbol=url_quote(symbol, safe="")),
@@ -375,6 +414,16 @@ def _combined_adjustment_rate(
     if fx_quote and fx_quote.change_pct is not None:
         fx_rate = fx_quote.change_pct / 100
     return (1 + market_rate) * (1 + fx_rate) - 1
+
+
+def _trend_change_pct(points: list[tuple[float, float]], sessions_back: int) -> float | None:
+    if len(points) <= sessions_back:
+        return None
+    previous = points[-1 - sessions_back][1]
+    latest = points[-1][1]
+    if previous <= 0:
+        return None
+    return (latest / previous - 1) * 100
 
 
 def _build_futures_trend_snapshot(

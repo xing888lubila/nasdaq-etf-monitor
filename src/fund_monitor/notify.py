@@ -85,7 +85,11 @@ def format_alerts(alerts: list[Alert]) -> str:
                 f"{signal.name}：{_format_percent_from_pct(signal.change_pct)}"
                 f"（{signal.updated_at or signal.source}）"
             )
-        lines.append("符合买入第一档条件，请人工打开东方财富证券 App 再确认。")
+        lines.append("已触发对应提醒档位，请人工打开东方财富证券 App 再确认。")
+        lines.append("")
+    us_market = alerts[0].us_market if alerts else None
+    if us_market:
+        lines.extend(_format_us_market_reference(us_market))
         lines.append("")
     return "\n".join(lines).strip()
 
@@ -137,11 +141,39 @@ def _format_us_market_snapshot(snapshot: USMarketSnapshot) -> list[str]:
         lines.append(_format_us_quote("备用", snapshot.fallback))
     if snapshot.nasdaq_index:
         lines.append(_format_us_quote("纳指收盘", snapshot.nasdaq_index))
+    if snapshot.nasdaq_index_trend:
+        trend = snapshot.nasdaq_index_trend
+        lines.append(
+            f"{trend.symbol} 趋势：昨日 {_format_percent_from_pct(trend.one_day_change_pct)}，"
+            f"近3日 {_format_percent_from_pct(trend.three_day_change_pct)}，"
+            f"近5日 {_format_percent_from_pct(trend.five_day_change_pct)}"
+        )
     if snapshot.fx:
         lines.append(_format_us_quote("汇率", snapshot.fx))
     for quote in snapshot.mega_caps:
         lines.append(_format_us_quote("权重股", quote))
     lines.append(f"修正因子：{_format_percent(snapshot.adjustment_rate)}（{snapshot.adjustment_source or 'N/A'}）")
+    return lines
+
+
+def _format_us_market_reference(snapshot: USMarketSnapshot) -> list[str]:
+    lines = ["美股参考信息（不参与本次提醒触发）："]
+    if snapshot.nasdaq_index_trend:
+        trend = snapshot.nasdaq_index_trend
+        lines.extend(
+            [
+                f"{trend.symbol} 最近收盘：{_format_float(trend.latest_close)}（{trend.latest_date or 'N/A'}）",
+                f"{trend.symbol} 昨日变化：{_format_percent_from_pct(trend.one_day_change_pct)}",
+                f"{trend.symbol} 近3个交易日：{_format_percent_from_pct(trend.three_day_change_pct)}",
+                f"{trend.symbol} 近5个交易日：{_format_percent_from_pct(trend.five_day_change_pct)}",
+            ]
+        )
+    elif snapshot.nasdaq_index:
+        lines.append(_format_us_quote("纳指收盘", snapshot.nasdaq_index))
+    if snapshot.primary:
+        lines.append(_format_us_quote("当天实时期货", snapshot.primary))
+    if snapshot.fallback:
+        lines.append(_format_us_quote("QQQ昨夜/盘前", snapshot.fallback))
     return lines
 
 

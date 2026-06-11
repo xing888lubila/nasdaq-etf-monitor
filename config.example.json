@@ -12,8 +12,6 @@
     "max_adjusted_premium_rate": 0.015,
     "use_adjusted_premium": true,
     "min_turnover_cny": 100000000,
-    "require_nasdaq_down": true,
-    "market_max_change_pct": -2.5,
     "stale_after_seconds": 120,
     "dedupe_minutes": 60,
     "alert_tiers": [
@@ -23,8 +21,7 @@
         "etf_max_change_pct": -1.5,
         "max_premium_rate": 0.03,
         "max_adjusted_premium_rate": null,
-        "min_turnover_cny": 100000000,
-        "require_us_weak": false
+        "min_turnover_cny": 100000000
       },
       {
         "enabled": true,
@@ -32,8 +29,7 @@
         "etf_max_change_pct": -2.5,
         "max_premium_rate": 0.02,
         "max_adjusted_premium_rate": 0.02,
-        "min_turnover_cny": 100000000,
-        "require_us_weak": false
+        "min_turnover_cny": 100000000
       },
       {
         "enabled": true,
@@ -41,8 +37,7 @@
         "etf_max_change_pct": -4.0,
         "max_premium_rate": 0.015,
         "max_adjusted_premium_rate": 0.015,
-        "min_turnover_cny": 100000000,
-        "require_us_weak": true
+        "min_turnover_cny": 100000000
       },
       {
         "enabled": true,
@@ -50,8 +45,7 @@
         "etf_max_change_pct": -6.0,
         "max_premium_rate": 0.01,
         "max_adjusted_premium_rate": 0.01,
-        "min_turnover_cny": 100000000,
-        "require_us_weak": true
+        "min_turnover_cny": 100000000
       }
     ]
   },

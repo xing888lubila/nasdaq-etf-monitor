@@ -47,7 +47,7 @@ class RuleTests(unittest.TestCase):
 
         self.assertEqual(alerts[0].level, "观察提醒")
 
-    def test_strong_alert_requires_us_weak_confirmation(self) -> None:
+    def test_strong_alert_does_not_require_us_weak_confirmation(self) -> None:
         quote = _quote(
             change_pct=-4.2,
             premium_rate=0.012,
@@ -55,13 +55,9 @@ class RuleTests(unittest.TestCase):
             turnover_cny=230_000_000,
         )
 
-        alerts_without_us = evaluate_alerts([quote], None, None, RuleConfig(), datetime(2026, 5, 25, 10, 0))
-        alerts_with_us = evaluate_alerts(
-            [quote], None, _us_market(primary_change_pct=-3.0), RuleConfig(), datetime(2026, 5, 25, 10, 0)
-        )
+        alerts = evaluate_alerts([quote], None, None, RuleConfig(), datetime(2026, 5, 25, 10, 0))
 
-        self.assertEqual(alerts_without_us[0].level, "重点提醒")
-        self.assertEqual(alerts_with_us[0].level, "强抄底提醒")
+        self.assertEqual(alerts[0].level, "强抄底提醒")
 
     def test_extreme_alert_is_highest_matching_tier(self) -> None:
         quote = _quote(
@@ -71,9 +67,7 @@ class RuleTests(unittest.TestCase):
             turnover_cny=230_000_000,
         )
 
-        alerts = evaluate_alerts(
-            [quote], None, _us_market(primary_change_pct=-3.0), RuleConfig(), datetime(2026, 5, 25, 10, 0)
-        )
+        alerts = evaluate_alerts([quote], None, None, RuleConfig(), datetime(2026, 5, 25, 10, 0))
 
         self.assertEqual(len(alerts), 1)
         self.assertEqual(alerts[0].level, "极端提醒")
@@ -147,6 +141,7 @@ def _us_market(
         primary=_us_quote("NQ=F", primary_change_pct) if primary_change_pct is not None else None,
         fallback=_us_quote("QQQ", fallback_change_pct) if fallback_change_pct is not None else None,
         nasdaq_index=_us_quote("^NDX", nasdaq_index_change_pct) if nasdaq_index_change_pct is not None else None,
+        nasdaq_index_trend=None,
         fx=None,
         mega_caps=(),
         adjustment_rate=None,

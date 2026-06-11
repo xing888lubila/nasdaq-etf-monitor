@@ -29,6 +29,7 @@ class ProviderTests(unittest.TestCase):
             primary=_quote("NQ=F", -2.0),
             fallback=None,
             nasdaq_index=None,
+            nasdaq_index_trend=None,
             fx=_quote("CNH=X", 0.5),
             mega_caps=(),
             adjustment_rate=(1 - 0.02) * (1 + 0.005) - 1,
