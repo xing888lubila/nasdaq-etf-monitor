@@ -28,7 +28,8 @@ $Settings = New-ScheduledTaskSettingsSet `
     -RestartCount 2 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries
+    -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable
 
 Register-ScheduledTask `
     -TaskName $TaskName `
@@ -52,7 +53,8 @@ $FuturesTrendSettings = New-ScheduledTaskSettingsSet `
     -RestartCount 2 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries
+    -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable
 
 Register-ScheduledTask `
     -TaskName $FuturesTrendTaskName `
