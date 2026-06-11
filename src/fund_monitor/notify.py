@@ -67,7 +67,7 @@ def format_alerts(alerts: list[Alert]) -> str:
         signal = alert.market_signal
         lines.extend(
             [
-                f"{quote.symbol} {quote.name}",
+                f"【{alert.level}】{quote.symbol} {quote.name}",
                 f"当前价格：{_format_float(quote.price)}",
                 f"IOPV：{_format_float(quote.iopv)}",
                 f"溢价率：{_format_percent(quote.premium_rate)}",
@@ -78,6 +78,8 @@ def format_alerts(alerts: list[Alert]) -> str:
                 f"ETF更新时间：{quote.updated_at or 'N/A'}",
             ]
         )
+        lines.append("触发条件：")
+        lines.extend(f"- {reason}" for reason in alert.reasons)
         if signal:
             lines.append(
                 f"{signal.name}：{_format_percent_from_pct(signal.change_pct)}"

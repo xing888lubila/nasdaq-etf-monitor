@@ -15,7 +15,45 @@
     "require_nasdaq_down": true,
     "market_max_change_pct": -2.5,
     "stale_after_seconds": 120,
-    "dedupe_minutes": 60
+    "dedupe_minutes": 60,
+    "alert_tiers": [
+      {
+        "enabled": true,
+        "name": "观察提醒",
+        "etf_max_change_pct": -1.5,
+        "max_premium_rate": 0.03,
+        "max_adjusted_premium_rate": null,
+        "min_turnover_cny": 100000000,
+        "require_us_weak": false
+      },
+      {
+        "enabled": true,
+        "name": "重点提醒",
+        "etf_max_change_pct": -2.5,
+        "max_premium_rate": 0.02,
+        "max_adjusted_premium_rate": 0.02,
+        "min_turnover_cny": 100000000,
+        "require_us_weak": false
+      },
+      {
+        "enabled": true,
+        "name": "强抄底提醒",
+        "etf_max_change_pct": -4.0,
+        "max_premium_rate": 0.015,
+        "max_adjusted_premium_rate": 0.015,
+        "min_turnover_cny": 100000000,
+        "require_us_weak": true
+      },
+      {
+        "enabled": true,
+        "name": "极端提醒",
+        "etf_max_change_pct": -6.0,
+        "max_premium_rate": 0.01,
+        "max_adjusted_premium_rate": 0.01,
+        "min_turnover_cny": 100000000,
+        "require_us_weak": true
+      }
+    ]
   },
   "us_market": {
     "enabled": true,

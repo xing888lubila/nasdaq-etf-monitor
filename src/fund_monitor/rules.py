@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from .config import RuleConfig
+from .config import AlertTierConfig, RuleConfig
 from .models import Alert, EtfQuote, MarketSignal, USMarketSnapshot
 
 
@@ -15,8 +15,9 @@ def evaluate_alerts(
 ) -> list[Alert]:
     alerts: list[Alert] = []
     for quote in quotes:
-        reasons = _check_quote(quote, market_signal, us_market, rules, now)
-        if reasons:
+        matched = _check_quote(quote, market_signal, us_market, rules, now)
+        if matched:
+            level, reasons = matched
             alerts.append(
                 Alert(
                     quote=quote,
@@ -24,6 +25,7 @@ def evaluate_alerts(
                     us_market=us_market,
                     triggered_at=now,
                     reasons=tuple(reasons),
+                    level=level,
                 )
             )
     return alerts
@@ -35,46 +37,75 @@ def _check_quote(
     us_market: USMarketSnapshot | None,
     rules: RuleConfig,
     now: datetime,
-) -> list[str]:
+) -> tuple[str, list[str]] | None:
     if quote.price is None:
-        return []
+        return None
     if quote.iopv is None or quote.premium_rate is None:
-        return []
+        return None
     if quote.turnover_cny is None:
-        return []
+        return None
+    if quote.change_pct is None:
+        return None
     if not _is_quote_fresh(quote, now=now, rules=rules):
-        return []
+        return None
 
-    premium_ok = quote.premium_rate <= rules.max_premium_rate
-    adjusted_premium_ok = True
-    if rules.use_adjusted_premium:
-        if quote.adjusted_premium_rate is None:
-            return []
-        adjusted_premium_ok = quote.adjusted_premium_rate <= rules.max_adjusted_premium_rate
+    matched_tier = _match_alert_tier(quote, market_signal, us_market, rules)
+    if matched_tier is None:
+        return None
 
-    turnover_ok = quote.turnover_cny >= rules.min_turnover_cny
-    nasdaq_ok = True
-    if rules.require_nasdaq_down:
-        nasdaq_ok = _is_market_down(market_signal, us_market, rules)
-
-    if not (premium_ok and adjusted_premium_ok and turnover_ok and nasdaq_ok):
-        return []
-
+    tier, us_weak_reason = matched_tier
     reasons = [
-        f"溢价率 {_format_percent(quote.premium_rate)} <= {_format_percent(rules.max_premium_rate)}",
-        f"成交额 {_format_cny(quote.turnover_cny)} >= {_format_cny(rules.min_turnover_cny)}",
+        f"ETF跌幅 {_format_percent(quote.change_pct / 100)} <= {_format_percent(tier.etf_max_change_pct / 100)}",
+        f"溢价率 {_format_percent(quote.premium_rate)} <= {_format_percent(tier.max_premium_rate)}",
+        f"成交额 {_format_cny(quote.turnover_cny)} >= {_format_cny(tier.min_turnover_cny)}",
     ]
-    if rules.use_adjusted_premium:
+    if tier.max_adjusted_premium_rate is not None:
         reasons.insert(
-            1,
+            2,
             f"修正后溢价率 {_format_percent(quote.adjusted_premium_rate)} <= "
-            f"{_format_percent(rules.max_adjusted_premium_rate)}",
+            f"{_format_percent(tier.max_adjusted_premium_rate)}",
         )
-    if rules.require_nasdaq_down and market_signal:
-        reasons.append(f"{market_signal.name} 涨跌幅 {_format_percent(market_signal.change_pct / 100)}")
-    if rules.require_nasdaq_down and us_market and us_market.primary and us_market.primary.change_pct is not None:
-        reasons.append(f"{us_market.primary.symbol} 涨跌幅 {_format_percent(us_market.primary.change_pct / 100)}")
-    return reasons
+    if us_weak_reason:
+        reasons.append(us_weak_reason)
+    return tier.name, reasons
+
+
+def _match_alert_tier(
+    quote: EtfQuote,
+    market_signal: MarketSignal | None,
+    us_market: USMarketSnapshot | None,
+    rules: RuleConfig,
+) -> tuple[AlertTierConfig, str | None] | None:
+    matched: tuple[AlertTierConfig, str | None] | None = None
+    for tier in rules.alert_tiers:
+        if not tier.enabled:
+            continue
+        if not tier.name:
+            continue
+        if not _quote_matches_tier(quote, tier):
+            continue
+        us_weak_reason = None
+        if tier.require_us_weak:
+            us_weak_reason = _us_weak_reason(market_signal, us_market, rules)
+            if us_weak_reason is None:
+                continue
+        matched = (tier, us_weak_reason)
+    return matched
+
+
+def _quote_matches_tier(quote: EtfQuote, tier: AlertTierConfig) -> bool:
+    if quote.change_pct is None or quote.change_pct > tier.etf_max_change_pct:
+        return False
+    if quote.premium_rate is None or quote.premium_rate > tier.max_premium_rate:
+        return False
+    if quote.turnover_cny is None or quote.turnover_cny < tier.min_turnover_cny:
+        return False
+    if tier.max_adjusted_premium_rate is not None:
+        if quote.adjusted_premium_rate is None:
+            return False
+        if quote.adjusted_premium_rate > tier.max_adjusted_premium_rate:
+            return False
+    return True
 
 
 def _is_market_down(
@@ -87,6 +118,28 @@ def _is_market_down(
     if market_signal:
         return market_signal.is_down
     return False
+
+
+def _us_weak_reason(
+    market_signal: MarketSignal | None,
+    us_market: USMarketSnapshot | None,
+    rules: RuleConfig,
+) -> str | None:
+    candidates: list[tuple[str, float]] = []
+    if us_market:
+        for quote in (us_market.primary, us_market.nasdaq_index, us_market.fallback):
+            if quote and quote.change_pct is not None:
+                candidates.append((quote.symbol, quote.change_pct))
+    if market_signal and market_signal.change_pct is not None:
+        candidates.append((market_signal.symbol, market_signal.change_pct))
+
+    for symbol, change_pct in candidates:
+        if change_pct <= rules.market_max_change_pct:
+            return (
+                f"美股侧明显偏弱：{symbol} 涨跌幅 "
+                f"{_format_percent(change_pct / 100)} <= {_format_percent(rules.market_max_change_pct / 100)}"
+            )
+    return None
 
 
 def _format_percent(value: float | None) -> str:

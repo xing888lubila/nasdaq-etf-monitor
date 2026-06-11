@@ -10,6 +10,17 @@ DEFAULT_ETFS = ("513100", "159941", "159632", "159659", "513300")
 
 
 @dataclass(frozen=True)
+class AlertTierConfig:
+    enabled: bool = True
+    name: str = ""
+    etf_max_change_pct: float = 0.0
+    max_premium_rate: float = 0.0
+    max_adjusted_premium_rate: float | None = None
+    min_turnover_cny: float = 100_000_000
+    require_us_weak: bool = False
+
+
+@dataclass(frozen=True)
 class RuleConfig:
     max_premium_rate: float = 0.015
     max_adjusted_premium_rate: float = 0.015
@@ -19,6 +30,40 @@ class RuleConfig:
     market_max_change_pct: float = -2.5
     stale_after_seconds: int = 120
     dedupe_minutes: int = 60
+    alert_tiers: tuple[AlertTierConfig, ...] = (
+        AlertTierConfig(
+            name="观察提醒",
+            etf_max_change_pct=-1.5,
+            max_premium_rate=0.03,
+            max_adjusted_premium_rate=None,
+            min_turnover_cny=100_000_000,
+            require_us_weak=False,
+        ),
+        AlertTierConfig(
+            name="重点提醒",
+            etf_max_change_pct=-2.5,
+            max_premium_rate=0.02,
+            max_adjusted_premium_rate=0.02,
+            min_turnover_cny=100_000_000,
+            require_us_weak=False,
+        ),
+        AlertTierConfig(
+            name="强抄底提醒",
+            etf_max_change_pct=-4.0,
+            max_premium_rate=0.015,
+            max_adjusted_premium_rate=0.015,
+            min_turnover_cny=100_000_000,
+            require_us_weak=True,
+        ),
+        AlertTierConfig(
+            name="极端提醒",
+            etf_max_change_pct=-6.0,
+            max_premium_rate=0.01,
+            max_adjusted_premium_rate=0.01,
+            min_turnover_cny=100_000_000,
+            require_us_weak=True,
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -65,6 +110,7 @@ def load_config(path: Path) -> MonitorConfig:
     data = json.loads(path.read_text(encoding="utf-8"))
 
     rules_data = data.get("rules", {})
+    default_rules = RuleConfig()
     us_market_data = data.get("us_market", {})
     nasdaq_data = data.get("nasdaq", {})
     email_data = data.get("email", {})
@@ -83,6 +129,7 @@ def load_config(path: Path) -> MonitorConfig:
             market_max_change_pct=float(rules_data.get("market_max_change_pct", -2.5)),
             stale_after_seconds=int(rules_data.get("stale_after_seconds", 120)),
             dedupe_minutes=int(rules_data.get("dedupe_minutes", 60)),
+            alert_tiers=_load_alert_tiers(rules_data.get("alert_tiers"), default_rules.alert_tiers),
         ),
         us_market=USMarketConfig(
             enabled=bool(us_market_data.get("enabled", True)),
@@ -136,3 +183,26 @@ def require_keys(config: EmailConfig) -> list[str]:
         if not value:
             missing.append(key)
     return missing
+
+
+def _load_alert_tiers(value: object, defaults: tuple[AlertTierConfig, ...]) -> tuple[AlertTierConfig, ...]:
+    if not isinstance(value, list):
+        return defaults
+
+    tiers: list[AlertTierConfig] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        max_adjusted = item.get("max_adjusted_premium_rate")
+        tiers.append(
+            AlertTierConfig(
+                enabled=bool(item.get("enabled", True)),
+                name=str(item.get("name", "")),
+                etf_max_change_pct=float(item.get("etf_max_change_pct", 0.0)),
+                max_premium_rate=float(item.get("max_premium_rate", 0.0)),
+                max_adjusted_premium_rate=None if max_adjusted is None else float(max_adjusted),
+                min_turnover_cny=float(item.get("min_turnover_cny", 100_000_000)),
+                require_us_weak=bool(item.get("require_us_weak", False)),
+            )
+        )
+    return tuple(tiers) or defaults

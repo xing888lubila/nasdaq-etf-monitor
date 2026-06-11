@@ -28,7 +28,7 @@ def main() -> int:
     config = load_config(config_path)
     provider = AkshareMarketDataProvider()
     notifier = EmailNotifier(config.email)
-    sent_at_by_symbol: dict[str, datetime] = {}
+    sent_at_by_alert_key: dict[str, datetime] = {}
     startup_snapshot_sent = False
 
     print(f"Using config: {config_path}")
@@ -53,11 +53,11 @@ def main() -> int:
             )
             startup_snapshot_sent = True
 
-        fresh_alerts = dedupe_alerts(list(snapshot.alerts), sent_at_by_symbol, config.rules.dedupe_minutes)
+        fresh_alerts = dedupe_alerts(list(snapshot.alerts), sent_at_by_alert_key, config.rules.dedupe_minutes)
         if fresh_alerts:
             notifier.send(fresh_alerts)
             for alert in fresh_alerts:
-                sent_at_by_symbol[alert.quote.symbol] = alert.triggered_at
+                sent_at_by_alert_key[_alert_key(alert)] = alert.triggered_at
         elif snapshot.alerts:
             print(f"{datetime.now().isoformat(timespec='seconds')} 已触发但处于去重窗口内")
         else:
@@ -105,7 +105,7 @@ def run_once(config, provider: AkshareMarketDataProvider) -> MonitorRun:
 
 def dedupe_alerts(
     alerts: list[Alert],
-    sent_at_by_symbol: dict[str, datetime],
+    sent_at_by_alert_key: dict[str, datetime],
     dedupe_minutes: int,
 ) -> list[Alert]:
     if dedupe_minutes <= 0:
@@ -114,10 +114,14 @@ def dedupe_alerts(
     window = timedelta(minutes=dedupe_minutes)
     fresh: list[Alert] = []
     for alert in alerts:
-        last_sent_at = sent_at_by_symbol.get(alert.quote.symbol)
+        last_sent_at = sent_at_by_alert_key.get(_alert_key(alert))
         if last_sent_at is None or alert.triggered_at - last_sent_at >= window:
             fresh.append(alert)
     return fresh
+
+
+def _alert_key(alert: Alert) -> str:
+    return f"{alert.quote.symbol}:{alert.level}"
 
 
 def _print_snapshot(quotes, market_signal, us_market) -> None:

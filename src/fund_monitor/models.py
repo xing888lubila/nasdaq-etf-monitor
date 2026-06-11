@@ -86,6 +86,7 @@ class Alert:
     us_market: USMarketSnapshot | None
     triggered_at: datetime
     reasons: tuple[str, ...]
+    level: str = "机会提醒"
 
 
 @dataclass(frozen=True)

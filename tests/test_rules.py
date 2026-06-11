@@ -14,81 +14,99 @@ from fund_monitor.rules import evaluate_alerts
 
 
 class RuleTests(unittest.TestCase):
-    def test_alert_when_all_conditions_match(self) -> None:
-        quote = _quote(premium_rate=0.012, turnover_cny=230_000_000)
-        signal = _signal(change_pct=-0.8)
+    def test_observation_alert_uses_domestic_etf_drop_as_primary_signal(self) -> None:
+        quote = _quote(change_pct=-1.6, premium_rate=0.025, turnover_cny=230_000_000)
+
+        alerts = evaluate_alerts([quote], None, None, RuleConfig(), datetime(2026, 5, 25, 10, 0))
+
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0].level, "观察提醒")
+
+    def test_focus_alert_requires_adjusted_premium(self) -> None:
+        quote = _quote(
+            change_pct=-2.6,
+            premium_rate=0.018,
+            adjusted_premium_rate=0.019,
+            turnover_cny=230_000_000,
+        )
+
+        alerts = evaluate_alerts([quote], None, None, RuleConfig(), datetime(2026, 5, 25, 10, 0))
+
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0].level, "重点提醒")
+
+    def test_focus_alert_blocked_when_adjusted_premium_is_too_high(self) -> None:
+        quote = _quote(
+            change_pct=-2.6,
+            premium_rate=0.018,
+            adjusted_premium_rate=0.025,
+            turnover_cny=230_000_000,
+        )
+
+        alerts = evaluate_alerts([quote], None, None, RuleConfig(), datetime(2026, 5, 25, 10, 0))
+
+        self.assertEqual(alerts[0].level, "观察提醒")
+
+    def test_strong_alert_requires_us_weak_confirmation(self) -> None:
+        quote = _quote(
+            change_pct=-4.2,
+            premium_rate=0.012,
+            adjusted_premium_rate=0.012,
+            turnover_cny=230_000_000,
+        )
+
+        alerts_without_us = evaluate_alerts([quote], None, None, RuleConfig(), datetime(2026, 5, 25, 10, 0))
+        alerts_with_us = evaluate_alerts(
+            [quote], None, _us_market(primary_change_pct=-3.0), RuleConfig(), datetime(2026, 5, 25, 10, 0)
+        )
+
+        self.assertEqual(alerts_without_us[0].level, "重点提醒")
+        self.assertEqual(alerts_with_us[0].level, "强抄底提醒")
+
+    def test_extreme_alert_is_highest_matching_tier(self) -> None:
+        quote = _quote(
+            change_pct=-6.5,
+            premium_rate=0.008,
+            adjusted_premium_rate=0.009,
+            turnover_cny=230_000_000,
+        )
 
         alerts = evaluate_alerts(
-            [quote], signal, None, RuleConfig(use_adjusted_premium=False), datetime(2026, 5, 25, 10, 0)
+            [quote], None, _us_market(primary_change_pct=-3.0), RuleConfig(), datetime(2026, 5, 25, 10, 0)
         )
 
         self.assertEqual(len(alerts), 1)
-        self.assertEqual(alerts[0].quote.symbol, "159659")
+        self.assertEqual(alerts[0].level, "极端提醒")
 
-    def test_premium_rate_uses_positive_value_for_premium(self) -> None:
-        quote = _quote(premium_rate=0.1084, turnover_cny=230_000_000)
-        signal = _signal(change_pct=-0.8)
+    def test_no_alert_when_etf_drop_is_not_deep_enough(self) -> None:
+        quote = _quote(change_pct=-1.0, premium_rate=0.01, turnover_cny=230_000_000)
 
-        alerts = evaluate_alerts(
-            [quote],
-            signal,
-            None,
-            RuleConfig(max_premium_rate=0.11, use_adjusted_premium=False),
-            datetime(2026, 5, 25, 10, 0),
-        )
-
-        self.assertEqual(len(alerts), 1)
-
-    def test_adjusted_premium_can_block_alert(self) -> None:
-        quote = _quote(premium_rate=0.01, turnover_cny=230_000_000, adjusted_premium_rate=0.025)
-        signal = _signal(change_pct=-0.8)
-
-        alerts = evaluate_alerts(
-            [quote],
-            signal,
-            _us_market(change_pct=-3.0),
-            RuleConfig(max_adjusted_premium_rate=0.015, use_adjusted_premium=True),
-            datetime(2026, 5, 25, 10, 0),
-        )
+        alerts = evaluate_alerts([quote], None, None, RuleConfig(), datetime(2026, 5, 25, 10, 0))
 
         self.assertEqual(alerts, [])
 
-    def test_no_alert_when_premium_is_too_high(self) -> None:
-        quote = _quote(premium_rate=0.02, turnover_cny=230_000_000)
-        signal = _signal(change_pct=-0.8)
+    def test_no_alert_when_turnover_is_too_low(self) -> None:
+        quote = _quote(change_pct=-2.0, premium_rate=0.01, turnover_cny=50_000_000)
 
-        alerts = evaluate_alerts(
-            [quote], signal, None, RuleConfig(use_adjusted_premium=False), datetime(2026, 5, 25, 10, 0)
-        )
-
-        self.assertEqual(alerts, [])
-
-    def test_no_alert_when_nasdaq_is_not_down_enough(self) -> None:
-        quote = _quote(premium_rate=0.012, turnover_cny=230_000_000)
-        signal = _signal(change_pct=-0.2)
-
-        alerts = evaluate_alerts(
-            [quote], signal, None, RuleConfig(use_adjusted_premium=False), datetime(2026, 5, 25, 10, 0)
-        )
+        alerts = evaluate_alerts([quote], None, None, RuleConfig(), datetime(2026, 5, 25, 10, 0))
 
         self.assertEqual(alerts, [])
 
     def test_no_alert_when_etf_quote_is_stale(self) -> None:
-        quote = _quote(premium_rate=0.012, turnover_cny=230_000_000, updated_at="2026-05-25 09:55:00")
-        signal = _signal(change_pct=-0.8)
-
-        alerts = evaluate_alerts(
-            [quote],
-            signal,
-            None,
-            RuleConfig(use_adjusted_premium=False, stale_after_seconds=120),
-            datetime(2026, 5, 25, 10, 0),
+        quote = _quote(
+            change_pct=-2.0,
+            premium_rate=0.01,
+            turnover_cny=230_000_000,
+            updated_at="2026-05-25 09:55:00",
         )
+
+        alerts = evaluate_alerts([quote], None, None, RuleConfig(), datetime(2026, 5, 25, 10, 0))
 
         self.assertEqual(alerts, [])
 
 
 def _quote(
+    change_pct: float,
     premium_rate: float,
     turnover_cny: float,
     adjusted_premium_rate: float | None = None,
@@ -98,7 +116,7 @@ def _quote(
         symbol="159659",
         name="纳斯达克100ETF招商",
         price=2.0 * (1 + premium_rate),
-        change_pct=1.2,
+        change_pct=change_pct,
         turnover_cny=turnover_cny,
         iopv=2.0,
         premium_rate=premium_rate,
@@ -120,25 +138,32 @@ def _signal(change_pct: float) -> MarketSignal:
     )
 
 
-def _us_market(change_pct: float) -> USMarketSnapshot:
-    quote = USMarketQuote(
-        symbol="NQ=F",
-        name="E-mini Nasdaq-100",
+def _us_market(
+    primary_change_pct: float | None = None,
+    nasdaq_index_change_pct: float | None = None,
+    fallback_change_pct: float | None = None,
+) -> USMarketSnapshot:
+    return USMarketSnapshot(
+        primary=_us_quote("NQ=F", primary_change_pct) if primary_change_pct is not None else None,
+        fallback=_us_quote("QQQ", fallback_change_pct) if fallback_change_pct is not None else None,
+        nasdaq_index=_us_quote("^NDX", nasdaq_index_change_pct) if nasdaq_index_change_pct is not None else None,
+        fx=None,
+        mega_caps=(),
+        adjustment_rate=None,
+        adjustment_source=None,
+        checked_at=datetime(2026, 5, 25, 10, 0),
+    )
+
+
+def _us_quote(symbol: str, change_pct: float) -> USMarketQuote:
+    return USMarketQuote(
+        symbol=symbol,
+        name=symbol,
         price=100.0,
         previous_close=100.0 / (1 + change_pct / 100),
         change_pct=change_pct,
         updated_at="2026-05-25 09:30:00",
         source="test",
-    )
-    return USMarketSnapshot(
-        primary=quote,
-        fallback=None,
-        nasdaq_index=None,
-        fx=None,
-        mega_caps=(),
-        adjustment_rate=change_pct / 100,
-        adjustment_source="NQ=F",
-        checked_at=datetime(2026, 5, 25, 10, 0),
     )
 
 

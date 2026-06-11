@@ -41,13 +41,33 @@ premium_rate = current_price / iopv - 1
 溢价率 = 当前价格 / IOPV - 1
 ```
 
-当前默认提醒条件：
+当前默认提醒条件改为分级触发。国内 ETF 自身跌幅是主信号，溢价率和成交额是过滤器，美股侧信号只用于强级别确认：
 
 ```text
+观察提醒：
+ETF change <= -1.5%
+premium_rate <= 3%
+turnover >= 100,000,000 CNY
+
+重点提醒：
+ETF change <= -2.5%
+premium_rate <= 2%
+adjusted_premium_rate <= 2%
+turnover >= 100,000,000 CNY
+
+强抄底提醒：
+ETF change <= -4%
 premium_rate <= 1.5%
 adjusted_premium_rate <= 1.5%
 turnover >= 100,000,000 CNY
-NQ=F change <= -2.5%
+NQ=F / ^NDX / QQQ at least one <= -2.5%
+
+极端提醒：
+ETF change <= -6%
+premium_rate <= 1%
+adjusted_premium_rate <= 1%
+turnover >= 100,000,000 CNY
+NQ=F / ^NDX / QQQ at least one <= -2.5%
 ```
 
 修正后参考值和修正后溢价率：
@@ -59,6 +79,8 @@ adjusted_premium_rate = current_price / adjusted_reference_value - 1
 ```
 
 The adjusted premium rate estimates whether the domestic ETF is still expensive after considering US futures and USD/CNH movement. It is an estimate, not official NAV.
+
+The default alerting logic is tiered. The domestic ETF drop is the primary signal; premium rate and turnover are filters; US-market weakness is required only for stronger buy-the-dip tiers.
 
 14:30 的 NQ=F 趋势模型使用北京时间 09:30-14:30 的 5 分钟分时数据，计算区间涨跌幅、后段动量和最大回撤，并输出 `偏空`、`震荡偏空`、`震荡`、`震荡偏多` 或 `偏多`。这个结果只用于判断当晚纳指情绪，不是保证性预测。
 
@@ -128,13 +150,16 @@ Edit `config.json`:
 - `rules.require_nasdaq_down`: 是否要求美股侧或纳指同时下跌
 - `rules.market_max_change_pct`: 美股侧主指标触发阈值，默认 `-2.5`
 - `rules.stale_after_seconds`: ETF 行情超过该秒数则不触发买入提醒
-- `rules.dedupe_minutes`: 同一 ETF 重复提醒间隔
+- `rules.dedupe_minutes`: 同一 ETF 同一提醒档位的重复提醒间隔
+- `rules.alert_tiers`: 分级提醒参数，可调整观察、重点、强抄底、极端四档
 - `us_market.primary_symbol`: 主美股指标，默认 `NQ=F`
 - `us_market.fallback_symbol`: 备用美股指标，默认 `QQQ`
 - `us_market.nasdaq_index_symbol`: 纳指收盘指标，默认 `^NDX`
 - `us_market.fx_symbol`: 汇率指标，默认 `CNH=X`
 - `us_market.mega_cap_symbols`: 辅助确认的核心权重股
 - `email`: SMTP 邮件配置
+
+说明：当前买入提醒以 `rules.alert_tiers` 为准；早期单一阈值字段保留用于兼容旧配置。
 
 - `poll_interval_seconds`: polling interval, currently 60 seconds
 - `etfs`: ETF symbols to monitor
@@ -145,13 +170,16 @@ Edit `config.json`:
 - `rules.require_nasdaq_down`: whether US market or Nasdaq must also be down
 - `rules.market_max_change_pct`: primary US-market trigger threshold, default `-2.5`
 - `rules.stale_after_seconds`: suppress opportunity alerts when ETF quotes are older than this many seconds
-- `rules.dedupe_minutes`: cooldown for repeated alerts on the same ETF
+- `rules.dedupe_minutes`: cooldown for repeated alerts on the same ETF and same alert tier
+- `rules.alert_tiers`: tiered alert parameters for observation, focus, strong dip-buy, and extreme alerts
 - `us_market.primary_symbol`: primary US-market signal, default `NQ=F`
 - `us_market.fallback_symbol`: fallback US-market signal, default `QQQ`
 - `us_market.nasdaq_index_symbol`: Nasdaq-100 index close signal, default `^NDX`
 - `us_market.fx_symbol`: FX signal, default `CNH=X`
 - `us_market.mega_cap_symbols`: mega-cap confirmation symbols
 - `email`: SMTP email settings
+
+Note: buy-the-dip alerts are currently driven by `rules.alert_tiers`; earlier single-threshold fields are kept for backward compatibility.
 
 不要把邮箱授权码写进 `config.json`。请使用环境变量：
 
