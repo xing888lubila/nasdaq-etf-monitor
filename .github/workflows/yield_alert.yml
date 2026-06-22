@@ -1,0 +1,36 @@
+name: Treasury Yield Alert
+
+permissions:
+  contents: write
+
+on:
+  schedule:
+    - cron: "*/15 * * * 1-6"
+  workflow_dispatch:
+
+jobs:
+  yield-alert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e .
+      - run: fund-monitor --once --check-yield-alert --config config.example.json
+        env:
+          ETF_MONITOR_EMAIL_ENABLED: "true"
+          ETF_MONITOR_SMTP_HOST: ${{ secrets.ETF_MONITOR_SMTP_HOST }}
+          ETF_MONITOR_SMTP_PORT: ${{ secrets.ETF_MONITOR_SMTP_PORT }}
+          ETF_MONITOR_SMTP_USER: ${{ secrets.ETF_MONITOR_SMTP_USER }}
+          ETF_MONITOR_SMTP_PASSWORD: ${{ secrets.ETF_MONITOR_SMTP_PASSWORD }}
+          ETF_MONITOR_MAIL_FROM: ${{ secrets.ETF_MONITOR_MAIL_FROM }}
+          ETF_MONITOR_MAIL_TO: ${{ secrets.ETF_MONITOR_MAIL_TO }}
+      - name: Persist alert state
+        run: |
+          git pull --rebase
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add storage/state.json
+          git diff --cached --quiet || git commit -m "Update yield alert state [skip ci]"
+          git push

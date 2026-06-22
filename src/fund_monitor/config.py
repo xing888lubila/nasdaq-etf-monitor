@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -138,16 +139,7 @@ def load_config(path: Path) -> MonitorConfig:
             symbol=str(nasdaq_data.get("symbol", "NDX")),
             max_change_pct=float(nasdaq_data.get("max_change_pct", -0.5)),
         ),
-        email=EmailConfig(
-            enabled=bool(email_data.get("enabled", False)),
-            smtp_host=str(email_data.get("smtp_host", "")),
-            smtp_port=int(email_data.get("smtp_port", 587)),
-            use_tls=bool(email_data.get("use_tls", True)),
-            username=str(email_data.get("username", "")),
-            password_env=str(email_data.get("password_env", "ETF_MONITOR_SMTP_PASSWORD")),
-            from_addr=str(email_data.get("from_addr", "")),
-            to_addrs=tuple(str(item) for item in email_data.get("to_addrs", [])),
-        ),
+        email=_load_email_config(email_data),
     )
 
 
@@ -174,6 +166,39 @@ def require_keys(config: EmailConfig) -> list[str]:
         if not value:
             missing.append(key)
     return missing
+
+
+def _load_email_config(email_data: dict[str, Any]) -> EmailConfig:
+    to_addrs = _env("ETF_MONITOR_MAIL_TO")
+    if to_addrs:
+        parsed_to_addrs = tuple(item.strip() for item in to_addrs.split(",") if item.strip())
+    else:
+        parsed_to_addrs = tuple(str(item) for item in email_data.get("to_addrs", []))
+
+    return EmailConfig(
+        enabled=_env_bool("ETF_MONITOR_EMAIL_ENABLED", bool(email_data.get("enabled", False))),
+        smtp_host=_env("ETF_MONITOR_SMTP_HOST", str(email_data.get("smtp_host", ""))),
+        smtp_port=int(_env("ETF_MONITOR_SMTP_PORT", str(email_data.get("smtp_port", 587)))),
+        use_tls=_env_bool("ETF_MONITOR_SMTP_TLS", bool(email_data.get("use_tls", True))),
+        username=_env("ETF_MONITOR_SMTP_USER", str(email_data.get("username", ""))),
+        password_env=str(email_data.get("password_env", "ETF_MONITOR_SMTP_PASSWORD")),
+        from_addr=_env("ETF_MONITOR_MAIL_FROM", str(email_data.get("from_addr", ""))),
+        to_addrs=parsed_to_addrs,
+    )
+
+
+def _env(name: str, default: str = "") -> str:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _load_alert_tiers(value: object, defaults: tuple[AlertTierConfig, ...]) -> tuple[AlertTierConfig, ...]:

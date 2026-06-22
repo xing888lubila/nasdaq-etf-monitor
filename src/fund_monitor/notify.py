@@ -6,7 +6,8 @@ from datetime import datetime
 from email.message import EmailMessage
 
 from .config import EmailConfig, require_keys
-from .models import Alert, EtfQuote, FuturesTrendSnapshot, MarketSignal, USMarketSnapshot
+from .models import Alert, EtfQuote, FuturesTrendSnapshot, MarketSignal, TreasuryYieldSnapshot, USMarketSnapshot
+from .scoring import ScoreItem, ScoreResult
 
 
 class EmailNotifier:
@@ -33,6 +34,9 @@ class EmailNotifier:
     def send_futures_trend_snapshot(self, snapshot: FuturesTrendSnapshot) -> None:
         body = format_futures_trend_snapshot(snapshot)
         self._deliver("【NQ=F 下午趋势快照】", body)
+
+    def send_prediction_report(self, subject: str, body: str) -> None:
+        self._deliver(subject, body)
 
     def _deliver(self, subject: str, body: str) -> None:
         if not self.config.enabled:
@@ -215,6 +219,98 @@ def format_futures_trend_snapshot(snapshot: FuturesTrendSnapshot) -> str:
         ]
     )
     return "\n".join(lines).strip()
+
+
+def format_score_report(
+    title_date: str,
+    score: ScoreResult,
+    key_reasons: list[str],
+    risk_reversals: list[str],
+    extra_sections: list[tuple[str, str]] | None = None,
+) -> tuple[str, str]:
+    subject = f"【纳指预测】{title_date}：{_cn_trend(score.trend_label)}，总分 {score.total_score:+d}，建议买入 {score.recommended_buy} 元"
+    lines = [
+        f"今日结论：{_cn_trend(score.trend_label)}，建议买入 {score.recommended_buy} 元。",
+        "",
+        "1. 五项打分表",
+    ]
+    for item in score.items:
+        lines.append(f"- {item.name}: {item.score:+d}，{item.label}。{item.reason}")
+
+    lines.extend(
+        [
+            "",
+            "2. 关键原因",
+        ]
+    )
+    lines.extend(f"- {reason}" for reason in key_reasons)
+    lines.extend(
+        [
+            "",
+            f"3. 趋势预测：上涨概率 {score.upside_probability}%，下跌概率 {score.downside_probability}%。",
+            f"主判断：{_cn_trend(score.trend_label)}。最关键变量：{score.key_variable}。",
+            "",
+            f"4. 今日操作：南方纳指100 I 类今日买入 {score.recommended_buy} 元。",
+            "",
+            "5. 风险提示：以下情况会推翻判断",
+        ]
+    )
+    lines.extend(f"- {item}" for item in risk_reversals)
+    if extra_sections:
+        for heading, body in extra_sections:
+            lines.extend(["", heading, body])
+    return subject, "\n".join(lines).strip()
+
+
+def format_yield_update(snapshot: TreasuryYieldSnapshot, score: ScoreResult, yield_item: ScoreItem | None = None) -> tuple[str, str]:
+    title_date = snapshot.latest_date or snapshot.checked_at.date().isoformat()
+    subject = f"【美债收益率更新】{title_date}：{_cn_trend(score.trend_label)}，建议买入 {score.recommended_buy} 元"
+    two = snapshot.two_year
+    ten = snapshot.ten_year
+    lines = [
+        "【美债收益率更新】",
+        f"2Y：{_format_yield(two.value if two else None)}，较前一交易日 {_format_bp(snapshot.two_year_change_bp)}",
+        f"10Y：{_format_yield(ten.value if ten else None)}，较前一交易日 {_format_bp(snapshot.ten_year_change_bp)}",
+        f"判断：{yield_item.reason if yield_item else score.rationale}",
+        f"对纳指影响：{_cn_score_label(yield_item) if yield_item else _cn_trend(score.trend_label)}。",
+        f"操作建议：买入 {score.recommended_buy} 元。",
+        f"来源：{snapshot.source}",
+    ]
+    return subject, "\n".join(lines).strip()
+
+
+def _cn_trend(value: str) -> str:
+    return {
+        "strong bullish": "明显偏多",
+        "bullish": "偏多",
+        "range-bound": "震荡",
+        "bearish": "偏空",
+        "strong bearish": "明显偏空",
+    }.get(value, value)
+
+
+def _cn_score_label(item: ScoreItem | None) -> str:
+    if item is None:
+        return "中性"
+    if item.score <= -2:
+        return "明显偏空"
+    if item.score <= -1:
+        return "偏空"
+    if item.score >= 1:
+        return "偏多"
+    return "中性"
+
+
+def _format_yield(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    return f"{value:.2f}%"
+
+
+def _format_bp(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    return f"{value:+.0f}bp"
 
 
 def _format_dt(value: datetime | None) -> str:

@@ -53,6 +53,64 @@ class USIndexTrend:
 
 
 @dataclass(frozen=True)
+class TreasuryYieldPoint:
+    date: str
+    value: float
+
+
+@dataclass(frozen=True)
+class TreasuryYieldSnapshot:
+    two_year: TreasuryYieldPoint | None
+    two_year_previous: TreasuryYieldPoint | None
+    ten_year: TreasuryYieldPoint | None
+    ten_year_previous: TreasuryYieldPoint | None
+    source: str
+    checked_at: datetime
+
+    @property
+    def latest_date(self) -> str | None:
+        dates = [point.date for point in (self.two_year, self.ten_year) if point is not None]
+        return max(dates) if dates else None
+
+    @property
+    def two_year_change_bp(self) -> float | None:
+        if self.two_year is None or self.two_year_previous is None:
+            return None
+        return (self.two_year.value - self.two_year_previous.value) * 100
+
+    @property
+    def ten_year_change_bp(self) -> float | None:
+        if self.ten_year is None or self.ten_year_previous is None:
+            return None
+        return (self.ten_year.value - self.ten_year_previous.value) * 100
+
+
+@dataclass(frozen=True)
+class IntradayTrendShape:
+    symbol: str
+    change_pct: float | None
+    open_price: float | None
+    high_price: float | None
+    low_price: float | None
+    close_price: float | None
+    shape: str
+    close_position: float | None
+    source: str
+    checked_at: datetime
+
+
+@dataclass(frozen=True)
+class MarketRelativeSnapshot:
+    qqq: USMarketQuote | None
+    ndx: USMarketQuote | None
+    spy: USMarketQuote | None
+    dia: USMarketQuote | None
+    smh: USMarketQuote | None
+    qqq_shape: IntradayTrendShape | None
+    checked_at: datetime
+
+
+@dataclass(frozen=True)
 class FuturesTrendPoint:
     timestamp: datetime
     price: float

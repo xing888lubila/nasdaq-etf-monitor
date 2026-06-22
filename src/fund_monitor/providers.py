@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import math
+import csv
+import xml.etree.ElementTree as ET
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from io import StringIO
 from typing import Iterable
 from urllib.parse import quote as url_quote
@@ -12,7 +14,19 @@ from zoneinfo import ZoneInfo
 import requests
 
 from .config import NasdaqConfig, USMarketConfig
-from .models import EtfQuote, FuturesTrendPoint, FuturesTrendSnapshot, MarketSignal, USIndexTrend, USMarketQuote, USMarketSnapshot
+from .models import (
+    EtfQuote,
+    FuturesTrendPoint,
+    FuturesTrendSnapshot,
+    IntradayTrendShape,
+    MarketRelativeSnapshot,
+    MarketSignal,
+    TreasuryYieldPoint,
+    TreasuryYieldSnapshot,
+    USIndexTrend,
+    USMarketQuote,
+    USMarketSnapshot,
+)
 
 
 EASTMONEY_NDX_URL = (
@@ -21,7 +35,12 @@ EASTMONEY_NDX_URL = (
 )
 EASTMONEY_ETF_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
 EASTMONEY_ETF_FIELDS = "f12,f14,f2,f3,f6,f402,f441,f297,f124"
-YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+YAHOO_CHART_URLS = (
+    "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+    "https://query2.finance.yahoo.com/v8/finance/chart/{symbol}",
+)
+FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+TREASURY_YIELD_XML_URL = "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml"
 
 
 class MarketDataError(RuntimeError):
@@ -33,8 +52,21 @@ class AkshareMarketDataProvider:
         symbol_list = [str(symbol).zfill(6) for symbol in symbols]
         try:
             return self._get_etf_quotes_from_eastmoney(symbol_list)
-        except Exception:
+        except Exception as eastmoney_exc:
+            print(f"Eastmoney ETF data failed: {eastmoney_exc}")
+        try:
+            return self._get_etf_quotes_from_eastmoney_single(symbol_list)
+        except Exception as single_exc:
+            print(f"Eastmoney single ETF data failed: {single_exc}")
+        try:
+            return self._get_etf_quotes_from_tencent(symbol_list)
+        except Exception as tencent_exc:
+            print(f"Tencent ETF data failed: {tencent_exc}")
+        try:
             return self._get_etf_quotes_from_akshare(symbol_list)
+        except Exception as akshare_exc:
+            print(f"AKShare ETF data failed: {akshare_exc}")
+            return [_missing_quote(symbol, "eastmoney/tencent/akshare unavailable") for symbol in symbol_list]
 
     def _get_etf_quotes_from_eastmoney(self, symbols: list[str]) -> list[EtfQuote]:
         response = requests.get(
@@ -76,6 +108,89 @@ class AkshareMarketDataProvider:
             )
         return sorted(quotes, key=lambda item: item.symbol)
 
+    def _get_etf_quotes_from_eastmoney_single(self, symbols: list[str]) -> list[EtfQuote]:
+        quotes: list[EtfQuote] = []
+        errors: list[str] = []
+        for symbol in symbols:
+            try:
+                quote = self._get_etf_quote_from_eastmoney_single(symbol)
+            except Exception as exc:
+                errors.append(f"{symbol}: {exc}")
+                quote = _missing_quote(symbol, "eastmoney.stock.get")
+            quotes.append(quote)
+        if all(quote.price is None for quote in quotes) and errors:
+            raise MarketDataError("; ".join(errors))
+        return sorted(quotes, key=lambda item: item.symbol)
+
+    def _get_etf_quote_from_eastmoney_single(self, symbol: str) -> EtfQuote:
+        response = requests.get(
+            "https://push2.eastmoney.com/api/qt/stock/get",
+            params={
+                "secid": _eastmoney_secid(symbol),
+                "fields": "f43,f57,f58,f170,f152,f441,f6,f124",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json().get("data") or {}
+        if not data:
+            raise MarketDataError(f"Eastmoney single quote returned no data for {symbol}")
+
+        scale = int(_to_float(data.get("f152")) or 2)
+        price = _scaled_float(data.get("f43"), scale)
+        change_pct = _scaled_float(data.get("f170"), scale)
+        iopv = _scaled_float(data.get("f441"), scale)
+        turnover = _to_float(data.get("f6"))
+        return EtfQuote(
+            symbol=str(data.get("f57", symbol)).zfill(6),
+            name=str(data.get("f58", "")),
+            price=price,
+            change_pct=change_pct,
+            turnover_cny=turnover,
+            iopv=iopv,
+            premium_rate=_premium_rate(price, iopv),
+            updated_at=_format_eastmoney_timestamp(data.get("f124")),
+            source="eastmoney.stock.get",
+        )
+
+    def _get_etf_quotes_from_tencent(self, symbols: list[str]) -> list[EtfQuote]:
+        query = ",".join(_tencent_symbol(symbol) for symbol in symbols)
+        response = requests.get(
+            "https://qt.gtimg.cn/q=" + query,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        rows_by_symbol: dict[str, EtfQuote] = {}
+        for raw_row in response.text.splitlines():
+            if '="' not in raw_row:
+                continue
+            payload = raw_row.split('="', 1)[1].rstrip('";')
+            fields = payload.split("~")
+            if len(fields) < 38:
+                continue
+            symbol = fields[2].zfill(6)
+            price = _to_float(fields[3])
+            change_pct = _to_float(fields[32])
+            turnover_cny = _to_float(fields[37])
+            if turnover_cny is not None:
+                turnover_cny *= 10_000
+            rows_by_symbol[symbol] = EtfQuote(
+                symbol=symbol,
+                name=fields[1],
+                price=price,
+                change_pct=change_pct,
+                turnover_cny=turnover_cny,
+                iopv=None,
+                premium_rate=None,
+                updated_at=_format_tencent_timestamp(fields[30]),
+                source="tencent.qt",
+            )
+        quotes = [rows_by_symbol.get(symbol) or _missing_quote(symbol, "tencent.qt") for symbol in symbols]
+        if all(quote.price is None for quote in quotes):
+            raise MarketDataError("Tencent quote returned no usable ETF rows")
+        return sorted(quotes, key=lambda item: item.symbol)
+
     def get_us_market_snapshot(self, config: USMarketConfig) -> USMarketSnapshot | None:
         if not config.enabled:
             return None
@@ -106,6 +221,38 @@ class AkshareMarketDataProvider:
             mega_caps=mega_caps,
             adjustment_rate=adjustment_rate,
             adjustment_source=adjustment_source,
+            checked_at=datetime.now(),
+        )
+
+    def get_market_relative_snapshot(self) -> MarketRelativeSnapshot:
+        return MarketRelativeSnapshot(
+            qqq=self._try_get_yahoo_chart_quote("QQQ"),
+            ndx=self._try_get_yahoo_chart_quote("^NDX"),
+            spy=self._try_get_yahoo_chart_quote("SPY"),
+            dia=self._try_get_yahoo_chart_quote("DIA"),
+            smh=self._try_get_yahoo_chart_quote("SMH"),
+            qqq_shape=self._try_get_intraday_trend_shape("QQQ"),
+            checked_at=datetime.now(),
+        )
+
+    def get_treasury_yield_snapshot(self) -> TreasuryYieldSnapshot:
+        two_year = self._try_get_fred_series_latest_two("DGS2")
+        ten_year = self._try_get_fred_series_latest_two("DGS10")
+        source = "fred.csv:DGS2,DGS10"
+        if two_year[0] is None or ten_year[0] is None:
+            treasury_two, treasury_ten = self._try_get_treasury_xml_latest_two()
+            if two_year[0] is None:
+                two_year = treasury_two
+            if ten_year[0] is None:
+                ten_year = treasury_ten
+            if treasury_two[0] is not None or treasury_ten[0] is not None:
+                source = "treasury.xml:daily_treasury_yield_curve"
+        return TreasuryYieldSnapshot(
+            two_year=two_year[0],
+            two_year_previous=two_year[1],
+            ten_year=ten_year[0],
+            ten_year_previous=ten_year[1],
+            source=source,
             checked_at=datetime.now(),
         )
 
@@ -298,6 +445,13 @@ class AkshareMarketDataProvider:
             print(f"Yahoo index trend 数据获取失败：{symbol}：{exc}")
             return None
 
+    def _try_get_intraday_trend_shape(self, symbol: str) -> IntradayTrendShape | None:
+        try:
+            return self._get_intraday_trend_shape(symbol)
+        except Exception as exc:
+            print(f"Yahoo intraday trend 数据获取失败：{symbol}：{exc}")
+            return None
+
     def _get_yahoo_index_trend(self, symbol: str) -> USIndexTrend:
         data = self._get_yahoo_chart_data(symbol, range_value="1mo", interval="1d")
         meta = data.get("meta", {})
@@ -328,19 +482,155 @@ class AkshareMarketDataProvider:
             source="yahoo.chart",
         )
 
+    def _get_intraday_trend_shape(self, symbol: str) -> IntradayTrendShape:
+        data = self._get_yahoo_chart_data(symbol, range_value="5d", interval="15m")
+        timestamps = data.get("timestamp") or []
+        quote = data.get("indicators", {}).get("quote", [{}])[0]
+        opens = quote.get("open", [])
+        highs = quote.get("high", [])
+        lows = quote.get("low", [])
+        closes = quote.get("close", [])
+        tz = ZoneInfo("America/New_York")
+        rows: list[tuple[datetime, float, float, float, float]] = []
+
+        for timestamp, open_value, high_value, low_value, close_value in zip(timestamps, opens, highs, lows, closes):
+            timestamp_value = _to_float(timestamp)
+            open_price = _to_float(open_value)
+            high_price = _to_float(high_value)
+            low_price = _to_float(low_value)
+            close_price = _to_float(close_value)
+            if (
+                timestamp_value is None
+                or open_price is None
+                or high_price is None
+                or low_price is None
+                or close_price is None
+            ):
+                continue
+            point_at = datetime.fromtimestamp(timestamp_value, tz)
+            if time(9, 30) <= point_at.time() <= time(16, 0):
+                rows.append((point_at, open_price, high_price, low_price, close_price))
+
+        if not rows:
+            raise MarketDataError(f"No regular-session bars for {symbol}")
+
+        latest_date = rows[-1][0].date()
+        session = [row for row in rows if row[0].date() == latest_date]
+        open_price = session[0][1]
+        high_price = max(row[2] for row in session)
+        low_price = min(row[3] for row in session)
+        close_price = session[-1][4]
+        change_pct = (close_price / open_price - 1) * 100 if open_price > 0 else None
+        close_position = (close_price - low_price) / (high_price - low_price) if high_price > low_price else None
+
+        return IntradayTrendShape(
+            symbol=symbol,
+            change_pct=change_pct,
+            open_price=open_price,
+            high_price=high_price,
+            low_price=low_price,
+            close_price=close_price,
+            shape=_classify_intraday_shape(session, close_position),
+            close_position=close_position,
+            source="yahoo.chart",
+            checked_at=datetime.now(),
+        )
+
     def _get_yahoo_chart_data(self, symbol: str, range_value: str, interval: str) -> dict:
+        last_exc: Exception | None = None
+        for url in YAHOO_CHART_URLS:
+            try:
+                response = requests.get(
+                    url.format(symbol=url_quote(symbol, safe="")),
+                    params={"range": range_value, "interval": interval, "includePrePost": "true"},
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    timeout=8,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                results = payload.get("chart", {}).get("result") or []
+                if results:
+                    return results[0]
+                last_exc = MarketDataError(f"Yahoo chart returned no data for {symbol}")
+            except Exception as exc:
+                last_exc = exc
+        raise MarketDataError(f"Yahoo chart failed for {symbol}: {last_exc}")
+
+    def _get_fred_series_latest_two(self, series_id: str) -> tuple[TreasuryYieldPoint | None, TreasuryYieldPoint | None]:
         response = requests.get(
-            YAHOO_CHART_URL.format(symbol=url_quote(symbol, safe="")),
-            params={"range": range_value, "interval": interval, "includePrePost": "true"},
+            FRED_CSV_URL,
+            params={"id": series_id, "cosd": (datetime.now().date() - timedelta(days=370)).isoformat()},
             headers={"User-Agent": "Mozilla/5.0"},
-            timeout=15,
+            timeout=12,
         )
         response.raise_for_status()
-        payload = response.json()
-        results = payload.get("chart", {}).get("result") or []
-        if not results:
-            raise MarketDataError(f"Yahoo chart returned no data for {symbol}")
-        return results[0]
+        rows = csv.DictReader(StringIO(response.text))
+        points: list[TreasuryYieldPoint] = []
+        for row in rows:
+            date_value = (row.get("observation_date") or "").strip()
+            value = _to_float(row.get(series_id))
+            if date_value and value is not None:
+                points.append(TreasuryYieldPoint(date=date_value, value=value))
+        if not points:
+            return None, None
+        if len(points) == 1:
+            return points[-1], None
+        return points[-1], points[-2]
+
+    def _try_get_fred_series_latest_two(self, series_id: str) -> tuple[TreasuryYieldPoint | None, TreasuryYieldPoint | None]:
+        try:
+            return self._get_fred_series_latest_two(series_id)
+        except Exception as exc:
+            print(f"FRED yield data failed: {series_id}: {exc}")
+            return None, None
+
+    def _try_get_treasury_xml_latest_two(
+        self,
+    ) -> tuple[
+        tuple[TreasuryYieldPoint | None, TreasuryYieldPoint | None],
+        tuple[TreasuryYieldPoint | None, TreasuryYieldPoint | None],
+    ]:
+        try:
+            return self._get_treasury_xml_latest_two()
+        except Exception as exc:
+            print(f"Treasury yield data failed: {exc}")
+            return (None, None), (None, None)
+
+    def _get_treasury_xml_latest_two(
+        self,
+    ) -> tuple[
+        tuple[TreasuryYieldPoint | None, TreasuryYieldPoint | None],
+        tuple[TreasuryYieldPoint | None, TreasuryYieldPoint | None],
+    ]:
+        response = requests.get(
+            TREASURY_YIELD_XML_URL,
+            params={"data": "daily_treasury_yield_curve", "field_tdr_date_value": datetime.now().year},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=12,
+        )
+        response.raise_for_status()
+        root = ET.fromstring(response.text)
+        two_year_points: list[TreasuryYieldPoint] = []
+        ten_year_points: list[TreasuryYieldPoint] = []
+
+        for properties in root.iter():
+            if not properties.tag.endswith("properties"):
+                continue
+            row = {_local_name(child.tag): (child.text or "").strip() for child in properties}
+            date_value = row.get("NEW_DATE") or row.get("NEW_DATE_VALUE") or row.get("DATE")
+            if not date_value:
+                continue
+            date_value = date_value[:10]
+            two_year = _to_float(row.get("BC_2YEAR"))
+            ten_year = _to_float(row.get("BC_10YEAR"))
+            if two_year is not None:
+                two_year_points.append(TreasuryYieldPoint(date=date_value, value=two_year))
+            if ten_year is not None:
+                ten_year_points.append(TreasuryYieldPoint(date=date_value, value=ten_year))
+
+        two_year_points.sort(key=lambda point: point.date)
+        ten_year_points.sort(key=lambda point: point.date)
+        return _latest_two_points(two_year_points), _latest_two_points(ten_year_points)
 
 
 def _import_akshare():
@@ -361,6 +651,11 @@ def _call_quietly(func, *args, **kwargs):
 def _eastmoney_secid(symbol: str) -> str:
     market = "1" if symbol.startswith(("5", "6", "9")) else "0"
     return f"{market}.{symbol}"
+
+
+def _tencent_symbol(symbol: str) -> str:
+    prefix = "sh" if symbol.startswith(("5", "6", "9")) else "sz"
+    return f"{prefix}{symbol}"
 
 
 def _missing_quote(symbol: str, source: str) -> EtfQuote:
@@ -389,6 +684,16 @@ def _format_unix_timestamp(value: object) -> str | None:
     if timestamp is None or timestamp <= 0:
         return None
     return datetime.fromtimestamp(timestamp).isoformat(sep=" ", timespec="seconds")
+
+
+def _format_tencent_timestamp(value: object) -> str | None:
+    text = str(value or "").strip()
+    if len(text) < 14 or not text[:14].isdigit():
+        return None
+    try:
+        return datetime.strptime(text[:14], "%Y%m%d%H%M%S").isoformat(sep=" ", timespec="seconds")
+    except ValueError:
+        return None
 
 
 def _latest_chart_point(timestamps: list[object], closes: list[object]) -> tuple[float, float] | None:
@@ -537,6 +842,44 @@ def _classify_futures_trend(
     return "震荡", "NQ=F 白天方向不清晰，当晚纳指走势不宜提前下结论。", rationale
 
 
+def _classify_intraday_shape(
+    session: list[tuple[datetime, float, float, float, float]],
+    close_position: float | None,
+) -> str:
+    if len(session) < 3:
+        return "unclear"
+
+    open_price = session[0][1]
+    close_price = session[-1][4]
+    midpoint = len(session) // 2
+    first_close = session[0][4]
+    mid_close = session[midpoint][4]
+    high_price = max(row[2] for row in session)
+    low_price = min(row[3] for row in session)
+    high_index = max(range(len(session)), key=lambda index: session[index][2])
+    low_index = min(range(len(session)), key=lambda index: session[index][3])
+
+    if close_position is not None:
+        if close_position <= 0.2:
+            return "close near low"
+        if close_position >= 0.8:
+            return "close near high"
+
+    if close_price < open_price and high_index < midpoint and close_price < mid_close:
+        return "rally faded"
+    if close_price > open_price and low_index < midpoint and close_price > mid_close:
+        return "v reversal"
+    if first_close > open_price and close_price < mid_close:
+        return "gap up fade"
+    if first_close < open_price and close_price > mid_close:
+        return "gap down rally"
+    if close_price < open_price and close_price <= low_price * 1.003:
+        return "opened low kept falling"
+    if close_price > open_price and close_price >= high_price * 0.997:
+        return "opened high kept rising"
+    return "unclear"
+
+
 def _to_float(value: object) -> float | None:
     if value is None:
         return None
@@ -549,6 +892,13 @@ def _to_float(value: object) -> float | None:
     if math.isnan(result):
         return None
     return result
+
+
+def _scaled_float(value: object, scale: int) -> float | None:
+    number = _to_float(value)
+    if number is None:
+        return None
+    return number / (10**scale)
 
 
 def _premium_rate(price: float | None, iopv: float | None) -> float | None:
@@ -564,3 +914,17 @@ def _to_optional_str(value: object) -> str | None:
     if not text or text in {"-", "--", "nan", "NaT"}:
         return None
     return text
+
+
+def _local_name(tag: str) -> str:
+    if "}" in tag:
+        return tag.rsplit("}", 1)[1]
+    return tag
+
+
+def _latest_two_points(points: list[TreasuryYieldPoint]) -> tuple[TreasuryYieldPoint | None, TreasuryYieldPoint | None]:
+    if not points:
+        return None, None
+    if len(points) == 1:
+        return points[-1], None
+    return points[-1], points[-2]

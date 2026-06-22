@@ -37,7 +37,16 @@ if (-not $env:ETF_MONITOR_SMTP_PASSWORD) {
 }
 
 try {
-    & $Runner --send-startup-snapshot --max-runtime-seconds 21000 --config $Config >> $LogFile 2>&1
+    Write-MonitorLog "Sending integrated 09:20 Nasdaq prediction snapshot."
+    & $Runner --once --send-morning-prediction --config $Config >> $LogFile 2>&1
+    $PredictionExitCode = $LASTEXITCODE
+    Write-MonitorLog "Integrated 09:20 Nasdaq prediction snapshot exited with code $PredictionExitCode."
+    if ($PredictionExitCode -ne 0) {
+        exit $PredictionExitCode
+    }
+
+    Write-MonitorLog "Starting continuous ETF opportunity monitor."
+    & $Runner --max-runtime-seconds 21000 --config $Config >> $LogFile 2>&1
     $ExitCode = $LASTEXITCODE
     Write-MonitorLog "ETF monitor session exited with code $ExitCode."
     exit $ExitCode

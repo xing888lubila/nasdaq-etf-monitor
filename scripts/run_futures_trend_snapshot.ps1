@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $LogDir = Join-Path $ProjectRoot "logs"
-$LogFile = Join-Path $LogDir ("futures-trend-" + (Get-Date -Format "yyyyMMdd") + ".log")
+$LogFile = Join-Path $LogDir ("afternoon-brief-" + (Get-Date -Format "yyyyMMdd") + ".log")
 $Runner = Join-Path $ProjectRoot ".venv\Scripts\fund-monitor.exe"
 $Config = Join-Path $ProjectRoot "config.json"
 
@@ -15,7 +15,7 @@ function Write-MonitorLog {
     Add-Content -LiteralPath $LogFile -Value $Line -Encoding UTF8
 }
 
-Write-MonitorLog "NQ=F futures trend snapshot starting."
+Write-MonitorLog "14:30 Nasdaq prediction brief starting."
 
 if (-not (Test-Path -LiteralPath $Runner)) {
     Write-MonitorLog "ERROR: runner not found: $Runner"
@@ -37,9 +37,9 @@ if (-not $env:ETF_MONITOR_SMTP_PASSWORD) {
 }
 
 try {
-    & $Runner --once --send-futures-trend --config $Config >> $LogFile 2>&1
+    & $Runner --once --send-afternoon-brief --config $Config >> $LogFile 2>&1
     $ExitCode = $LASTEXITCODE
-    Write-MonitorLog "NQ=F futures trend snapshot exited with code $ExitCode."
+    Write-MonitorLog "14:30 Nasdaq prediction brief exited with code $ExitCode."
     exit $ExitCode
 }
 catch {

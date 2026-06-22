@@ -61,11 +61,11 @@ Register-ScheduledTask `
     -Action $FuturesTrendAction `
     -Trigger $FuturesTrendTrigger `
     -Settings $FuturesTrendSettings `
-    -Description "Send NQ=F China-session futures trend snapshot at 14:30 on weekdays." `
+    -Description "Send integrated Nasdaq futures prediction and scoring brief at 14:30 on weekdays." `
     -Force | Out-Null
 
 Write-Host "Installed scheduled task: $TaskName"
-Write-Host "Schedule: Monday-Friday 09:20, stops after 6 hours."
+Write-Host "Schedule: Monday-Friday 09:20, sends integrated prediction snapshot, then monitors ETF alerts for 6 hours."
 Write-Host "Installed scheduled task: $FuturesTrendTaskName"
-Write-Host "Schedule: Monday-Friday 14:30, sends one NQ=F futures trend snapshot."
+Write-Host "Schedule: Monday-Friday 14:30, sends integrated NQ futures prediction and scoring brief."
 Write-Host "Logs: $ProjectRoot\logs"
