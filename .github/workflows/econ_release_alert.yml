@@ -8,6 +8,10 @@ on:
     - cron: "*/15 * * * 1-5"
   workflow_dispatch:
 
+concurrency:
+  group: econ-release-alert-state
+  cancel-in-progress: false
+
 jobs:
   econ-release-alert:
     runs-on: ubuntu-latest
@@ -17,6 +21,8 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -e .
+      - name: Sync latest state
+        run: git pull --ff-only
       - run: fund-monitor --once --check-econ-release-alert --config config.example.json
         env:
           ETF_MONITOR_EMAIL_ENABLED: "true"
@@ -28,9 +34,13 @@ jobs:
           ETF_MONITOR_MAIL_TO: ${{ secrets.ETF_MONITOR_MAIL_TO }}
       - name: Persist alert state
         run: |
-          git pull --rebase
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add storage/state.json
-          git diff --cached --quiet || git commit -m "Update econ alert state [skip ci]"
-          git push
+          if ! git diff --cached --quiet; then
+            git commit -m "Update econ alert state [skip ci]"
+            git pull --rebase
+            git push
+          else
+            echo "No econ alert state changes to persist."
+          fi
