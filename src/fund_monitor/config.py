@@ -189,14 +189,14 @@ def _load_email_config(email_data: dict[str, Any]) -> EmailConfig:
 
 def _env(name: str, default: str = "") -> str:
     value = os.environ.get(name)
-    if value is None:
+    if value is None or value.strip() == "":
         return default
     return value
 
 
 def _env_bool(name: str, default: bool) -> bool:
     value = os.environ.get(name)
-    if value is None:
+    if value is None or value.strip() == "":
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
 

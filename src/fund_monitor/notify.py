@@ -45,11 +45,17 @@ class EmailNotifier:
 
         missing = require_keys(self.config)
         if missing:
-            raise ValueError(f"Email config missing: {', '.join(missing)}")
+            print(f"Email config missing: {', '.join(missing)}. Printing message instead of failing.")
+            print(f"Subject: {subject}")
+            print(body)
+            return
 
         password = os.environ.get(self.config.password_env)
         if not password:
-            raise ValueError(f"Missing SMTP password env var: {self.config.password_env}")
+            print(f"Missing SMTP password env var: {self.config.password_env}. Printing message instead of failing.")
+            print(f"Subject: {subject}")
+            print(body)
+            return
 
         message = EmailMessage()
         message["Subject"] = subject
