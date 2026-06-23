@@ -859,22 +859,26 @@ def _classify_intraday_shape(
     high_index = max(range(len(session)), key=lambda index: session[index][2])
     low_index = min(range(len(session)), key=lambda index: session[index][3])
 
+    # A session that finishes below its open is not a bullish V reversal even if
+    # it bounces after the intraday low. Treat early strength followed by a lower
+    # close as a failed rally.
+    if close_price < open_price and high_index <= midpoint and low_index > high_index:
+        return "rally faded"
+    if close_price < open_price and close_price <= low_price * 1.003:
+        return "opened low kept falling"
+
     if close_position is not None:
         if close_position <= 0.2:
             return "close near low"
         if close_position >= 0.8:
             return "close near high"
 
-    if close_price < open_price and high_index < midpoint and close_price < mid_close:
-        return "rally faded"
     if close_price > open_price and low_index < midpoint and close_price > mid_close:
         return "v reversal"
     if first_close > open_price and close_price < mid_close:
         return "gap up fade"
     if first_close < open_price and close_price > mid_close:
         return "gap down rally"
-    if close_price < open_price and close_price <= low_price * 1.003:
-        return "opened low kept falling"
     if close_price > open_price and close_price >= high_price * 0.997:
         return "opened high kept rising"
     return "unclear"

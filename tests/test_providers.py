@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from fund_monitor.models import EtfQuote, FuturesTrendPoint, USMarketQuote, USMarketSnapshot
-from fund_monitor.providers import AkshareMarketDataProvider, _build_futures_trend_snapshot
+from fund_monitor.providers import AkshareMarketDataProvider, _build_futures_trend_snapshot, _classify_intraday_shape
 
 
 class ProviderTests(unittest.TestCase):
@@ -60,6 +60,20 @@ class ProviderTests(unittest.TestCase):
 
         self.assertEqual(snapshot.trend_label, "偏空")
         self.assertAlmostEqual(snapshot.change_pct or 0, -2.0, places=4)
+
+    def test_intraday_shape_treats_lower_close_after_morning_high_as_rally_faded(self) -> None:
+        session = [
+            (datetime(2026, 6, 22, 9, 30), 742.02, 744.44, 740.43, 741.20),
+            (datetime(2026, 6, 22, 9, 45), 741.21, 744.70, 741.19, 744.70),
+            (datetime(2026, 6, 22, 10, 0), 744.60, 745.43, 743.81, 744.06),
+            (datetime(2026, 6, 22, 12, 0), 735.00, 736.00, 734.39, 735.20),
+            (datetime(2026, 6, 22, 15, 45), 735.79, 738.50, 735.76, 738.05),
+            (datetime(2026, 6, 22, 16, 0), 737.95, 737.95, 737.95, 737.95),
+        ]
+
+        shape = _classify_intraday_shape(session, close_position=0.32)
+
+        self.assertEqual(shape, "rally faded")
 
 
 def _quote(symbol: str, change_pct: float) -> USMarketQuote:
